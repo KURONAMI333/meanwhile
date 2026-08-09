@@ -702,6 +702,7 @@ public final class UnloadedCatchUpGameTests {
         private final int[] slices;
         private final boolean gate;
         private final long[] worstMicros;
+        private final int[] worstTicks;
         private final int[] drainsUsed;
         private final long[] ticksToPay;
         private final int[] instalments;
@@ -718,6 +719,7 @@ public final class UnloadedCatchUpGameTests {
             this.slices = slices;
             this.gate = gate;
             this.worstMicros = new long[slices.length];
+            this.worstTicks = new int[slices.length];
             this.drainsUsed = new int[slices.length];
             this.ticksToPay = new long[slices.length];
             this.instalments = new int[slices.length];
@@ -815,6 +817,7 @@ public final class UnloadedCatchUpGameTests {
                         return;
                     }
                     worstMicros[phase] = ChunkCatchUp.worstDrainMicros();
+                    worstTicks[phase] = ChunkCatchUp.worstDrainTicks();
                     drainsUsed[phase] = ChunkCatchUp.drains();
                     ticksToPay[phase] = now - payingSince + 1;
                     instalments[phase] = ChunkCatchUp.slicesFor(target);
@@ -824,12 +827,13 @@ public final class UnloadedCatchUpGameTests {
                     // form carried an extra argument and every field after it printed the wrong
                     // quantity under the right name.
                     Meanwhile.LOGGER.info("[debt] phase {} | slice={} gap={} paidOver={} ticks"
-                                    + " drains={} worstDrain={}us owed={} paid={} queue={}"
-                                    + " reentryRefused={} instalments={}",
+                                    + " drains={} worstDrainTicks={} worstDrain={}us owed={}"
+                                    + " paid={} queue={} reentryRefused={} instalments={}",
                             phase, slices[phase] == 0 ? "unlimited" : String.valueOf(slices[phase]),
-                            BIG_GAP, ticksToPay[phase], drainsUsed[phase], worstMicros[phase],
-                            owed[phase], paid[phase], ChunkCatchUp.queueLength(),
-                            ChunkCatchUp.reentryRefused(), instalments[phase]);
+                            BIG_GAP, ticksToPay[phase], drainsUsed[phase], worstTicks[phase],
+                            worstMicros[phase], owed[phase], paid[phase],
+                            ChunkCatchUp.queueLength(), ChunkCatchUp.reentryRefused(),
+                            instalments[phase]);
                     if (++phase >= slices.length) {
                         step = Step.DONE;
                         return;
@@ -858,10 +862,11 @@ public final class UnloadedCatchUpGameTests {
             RoundTripImages.stopWatching();
 
             for (int i = 0; i < slices.length; i++) {
-                Meanwhile.LOGGER.info("[debt] RESULT slice={} | worstDrain={}us instalments={}"
-                                + " paidOver={} ticks owed={} paid={}",
-                        slices[i] == 0 ? "unlimited" : String.valueOf(slices[i]), worstMicros[i],
-                        instalments[i], ticksToPay[i], owed[i], paid[i]);
+                Meanwhile.LOGGER.info("[debt] RESULT slice={} | worstDrainTicks={}"
+                                + " worstDrain={}us instalments={} paidOver={} ticks owed={}"
+                                + " paid={}",
+                        slices[i] == 0 ? "unlimited" : String.valueOf(slices[i]), worstTicks[i],
+                        worstMicros[i], instalments[i], ticksToPay[i], owed[i], paid[i]);
             }
 
             if (failure != null) {
@@ -900,10 +905,16 @@ public final class UnloadedCatchUpGameTests {
                         + " so nothing was split and this compares one payment with one payment");
                 return;
             }
-            if (worstMicros[1] >= worstMicros[0]) {
-                helper.fail("the longest single drain did not fall when the debt was split: one"
-                        + " payment " + worstMicros[0] + "us, instalments " + worstMicros[1]
-                        + "us");
+            // What the claim is actually about: the budget bounds the work one drain does. That
+            // is counted, not timed, so it holds on a loaded host and on an idle one. The
+            // microsecond figures are logged above and asserted on nowhere; a wall-clock
+            // inequality in a required test is a gate on the machine it runs on, not on the code
+            // (GAP_LOG G130 ruling 6).
+            if (worstTicks[1] >= worstTicks[0]) {
+                helper.fail("the budget did not bound the work in one drain: the single payment"
+                        + " ticked " + worstTicks[0] + " times in its worst drain and the split"
+                        + " one ticked " + worstTicks[1] + ", over " + instalments[1]
+                        + " instalments");
                 return;
             }
             helper.succeed();

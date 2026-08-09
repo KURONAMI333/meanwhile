@@ -314,6 +314,12 @@ public final class ChunkCatchUp {
 
     private static volatile long drainNanos;
     private static volatile long worstDrainNanos;
+    /**
+     * The most real ticker invocations any one drain has paid for. The deterministic half of
+     * {@link #worstDrainNanos}: how long a drain took is a property of the host, how much work it
+     * did is a property of the budget.
+     */
+    private static volatile int worstDrainRealTicks;
     private static volatile int drains;
 
     private ChunkCatchUp() {
@@ -486,6 +492,9 @@ public final class ChunkCatchUp {
         drains++;
         if (nanos > worstDrainNanos) {
             worstDrainNanos = nanos;
+        }
+        if (spentRealTicks > worstDrainRealTicks) {
+            worstDrainRealTicks = spentRealTicks;
         }
         if (jobsTaken > 0) {
             Meanwhile.LOGGER.info("[catchup] drain | dim={} jobs={} realTicks={} budget={}"
@@ -906,6 +915,7 @@ public final class ChunkCatchUp {
         reentryRefused = 0;
         drainNanos = 0L;
         worstDrainNanos = 0L;
+        worstDrainRealTicks = 0;
         drains = 0;
         owedTotal.clear();
         paidTotal.clear();
@@ -953,6 +963,14 @@ public final class ChunkCatchUp {
     /** The longest single drain, in microseconds. This is the number a stall would show up in. */
     public static long worstDrainMicros() {
         return worstDrainNanos / 1000L;
+    }
+
+    /**
+     * The most real ticker invocations any one drain has paid for. What a budget is supposed to
+     * bound, counted rather than timed, so an assertion about it holds on any host.
+     */
+    public static int worstDrainTicks() {
+        return worstDrainRealTicks;
     }
 
     public static long totalDrainMicros() {
