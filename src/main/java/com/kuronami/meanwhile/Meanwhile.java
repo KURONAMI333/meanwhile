@@ -10,6 +10,7 @@ import com.kuronami.meanwhile.elapsed.ChunkClockAttachments;
 import com.kuronami.meanwhile.elapsed.CorpusSweepGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceSpanGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceWideGameTests;
+import com.kuronami.meanwhile.elapsed.ScaffoldGameTests;
 import com.kuronami.meanwhile.elapsed.UnloadedCatchUpGameTests;
 import com.kuronami.meanwhile.generic.GenericCatchUpGameTests;
 import com.kuronami.meanwhile.scheduler.TargetRegistry;
@@ -76,9 +77,10 @@ public class Meanwhile {
             event.register(FurnaceWideGameTests.class);
             event.register(CorpusSweepGameTests.class);
             event.register(CatchUpGuardGameTests.class);
+            event.register(ScaffoldGameTests.class);
         });
         LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
-                + " wide, corpus sweep, guard");
+                + " wide, corpus sweep, guard, scaffold");
 
         // The unloaded catch-up gate is measured against a Create machine, so it exists only
         // when Create does.

@@ -201,11 +201,18 @@ public final class ChunkCatchUp {
         TICK_INTERLEAVED
     }
 
-    /** What was tried at one position, and what came of it. */
+    /**
+     * What was tried at one position, and what came of it.
+     *
+     * <p>Only the counters are always filled in. {@code block}, {@code type} and {@code ticker}
+     * read {@link #UNRECORDED} and the two tags are null unless an {@link Observer} was installed
+     * — the product spends the window and reads none of this back, and producing it is most of
+     * what a slice would otherwise cost.
+     */
     public record Attempt(BlockPos pos, String block, String type, String ticker, int ticks,
                           boolean declined, @Nullable String declineReason, int realTicks,
                           int jumps, int jumpedTicks, String refusals, String writes,
-                          CompoundTag before, @Nullable CompoundTag after) {
+                          @Nullable CompoundTag before, @Nullable CompoundTag after) {
 
         public boolean jumped() {
             return !declined && jumps > 0;
@@ -303,6 +310,9 @@ public final class ChunkCatchUp {
      */
     private static volatile int reentryRefused;
     private static volatile boolean reentryReported;
+
+    /** What an {@link Attempt}'s descriptive fields say when no {@link Observer} asked for them. */
+    private static final String UNRECORDED = "<not recorded>";
 
     /** Slices abandoned because something outside the ticker call threw. Logged once, counted. */
     private static volatile int drainFailures;
@@ -683,17 +693,26 @@ public final class ChunkCatchUp {
         int realTicks = 0;
         int jumpedTicks = 0;
 
+        // Everything below that is not the catch-up itself exists to be compared against, and a
+        // comparison is something a measurement installs. Serialising every block entity twice
+        // per slice, naming its block, its class and the ticker the game would have handed out
+        // are all reads that the product never looks at; on a chunk of a hundred machines they
+        // are the larger half of what a slice costs. What is not conditional is anything a
+        // counter is taken from: the real ticks spent are what the drain budgets on.
+        boolean recording = observer != null;
+
         for (BlockPos pos : positions) {
             BlockEntity blockEntity = chunk.getBlockEntities().get(pos);
             if (blockEntity == null) {
                 // Removed by an earlier catch-up in this same sweep.
                 continue;
             }
-            CompoundTag before = blockEntity.saveWithoutMetadata(registries);
-            String block = BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock())
-                    .toString();
-            String type = blockEntity.getClass().getName();
-            String ticker = tickerName(level, pos);
+            CompoundTag before = recording ? blockEntity.saveWithoutMetadata(registries) : null;
+            String block = recording
+                    ? BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock()).toString()
+                    : UNRECORDED;
+            String type = recording ? blockEntity.getClass().getName() : UNRECORDED;
+            String ticker = recording ? tickerName(level, pos) : UNRECORDED;
 
             Attempt attempt;
             try {
@@ -705,25 +724,28 @@ public final class ChunkCatchUp {
                 } else if (how == Spend.CATCH_UP) {
                     GenericCatchUp.Result result = GenericCatchUp.catchUp(level, pos, dispatched,
                             GenericCatchUp.Mode.SAFE);
-                    BlockEntity now = level.getBlockEntity(pos);
                     attempt = new Attempt(pos, block, type, ticker, dispatched, result.declined(),
                             result.declineReason(), result.realTicks(), result.jumps(),
                             result.jumpedTicks(), String.valueOf(result.refusals()),
                             String.valueOf(result.writes()), before,
-                            now == null ? null : now.saveWithoutMetadata(registries));
+                            recording ? tagAt(level, pos, registries) : null);
                 } else {
                     int ran = GenericCatchUp.tick(level, pos, dispatched);
-                    BlockEntity now = level.getBlockEntity(pos);
                     attempt = new Attempt(pos, block, type, ticker, dispatched, ran == 0,
                             ran == 0 ? "nothing tickable at " + pos : null, ran, 0, 0, "{}",
                             "{control}", before,
-                            now == null ? null : now.saveWithoutMetadata(registries));
+                            recording ? tagAt(level, pos, registries) : null);
                 }
             } catch (Throwable thrown) {
                 // The only place a third party's code runs on this mod's route. Vanilla's own
                 // ticking loop catches here; the route the catch-up added does not, and it sits
-                // inside LevelTickEvent.Post, so without this the server goes down.
-                boolean isolated = CatchUpGuard.record(level.dimension(), pos, block, thrown);
+                // inside LevelTickEvent.Post, so without this the server goes down. The block is
+                // named here rather than above: what the guard needs it for happens once per
+                // exception, not once per block entity per slice.
+                boolean isolated = CatchUpGuard.record(level.dimension(), pos,
+                        BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock())
+                                .toString(),
+                        thrown);
                 attempt = new Attempt(pos, block, type, ticker, dispatched, true,
                         (isolated ? "threw and was isolated: " : "threw: ")
                                 + thrown.getClass().getName(),
@@ -824,6 +846,14 @@ public final class ChunkCatchUp {
      * otherwise modify the map being walked. Ordered because the map's iteration order is not
      * promised to be stable, and a window spent in a different order is a different measurement.
      */
+    /** The tag at a position, or null if the catch-up left nothing there. */
+    @Nullable
+    private static CompoundTag tagAt(ServerLevel level, BlockPos pos,
+                                     HolderLookup.Provider registries) {
+        BlockEntity now = level.getBlockEntity(pos);
+        return now == null ? null : now.saveWithoutMetadata(registries);
+    }
+
     private static List<BlockPos> positionsOf(LevelChunk chunk) {
         List<BlockPos> positions = new ArrayList<>(chunk.getBlockEntities().keySet());
         positions.sort(Comparator.comparingLong(BlockPos::asLong));
