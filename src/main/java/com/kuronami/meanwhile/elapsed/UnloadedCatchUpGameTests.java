@@ -207,6 +207,7 @@ public final class UnloadedCatchUpGameTests {
     private static final class Idempotence implements ArmedObserver {
 
         private long target = Long.MIN_VALUE;
+        private BoundingBox arena = BoundingBox.fromCorners(BlockPos.ZERO, BlockPos.ZERO);
         private boolean ran;
         private List<String> loadedToFirst = List.of();
         private List<String> firstToSecond = List.of();
@@ -218,15 +219,17 @@ public final class UnloadedCatchUpGameTests {
         @Override
         public void arm(GameTestHelper helper, MillstoneSubject subject, ChunkPos chunk) {
             this.target = chunk.toLong();
+            this.arena = arenaBox(helper);
         }
 
         @Override
         public void beforeSweep(ServerLevel level, LevelChunk chunk, int dispatched,
-                                List<BlockPos> positions) {
+                                List<BlockPos> offered) {
             if (ran || chunk.getPos().toLong() != target) {
                 return;
             }
             ran = true;
+            List<BlockPos> positions = within(arena, offered);
             HolderLookup.Provider registries = level.registryAccess();
 
             // The tag every reconstruction restores from, taken once. All three rounds put back
@@ -308,6 +311,29 @@ public final class UnloadedCatchUpGameTests {
         }
     }
 
+    /**
+     * The offered positions that lie inside this arena.
+     *
+     * <p>The catch-up is offered every block entity the chunk holds, which is what the mod does
+     * and is not narrowed here. What is narrowed is what a comparison may touch. GameTest stands
+     * its arenas fourteen blocks apart and a chunk is sixteen wide, so the chunk handed to an
+     * observer routinely carries the machines of the tests either side — the failure lines this
+     * was found in named a neighbour's column and this arena's in the same list
+     * ({@code ucu_stage2a_probe.log:1584}). An observer that walks them all reconstructs a
+     * neighbour from a tag this arena recorded, ticks a window over it, and then reports the keys
+     * it disagrees on as evidence about a catch-up. It is not: it is this test rewriting somebody
+     * else's arena and then reading it back.
+     */
+    private static List<BlockPos> within(BoundingBox arena, List<BlockPos> offered) {
+        List<BlockPos> mine = new ArrayList<>();
+        for (BlockPos pos : offered) {
+            if (arena.isInside(pos)) {
+                mine.add(pos);
+            }
+        }
+        return mine;
+    }
+
     /** The window, ticked one tick across every position at a time, which is the game's order. */
     private static void tickWindow(ServerLevel level, List<BlockPos> positions, int window) {
         for (int tick = 0; tick < window; tick++) {
@@ -372,6 +398,13 @@ public final class UnloadedCatchUpGameTests {
      * were optional. The arena is levelled before arm B runs now, and what it was reporting
      * is measured rather than supposed: see {@link #reconstructionIdempotenceDiagnostic}.
      * The comparison comes out bit-for-bit equal, and is binding for that reason.
+     *
+     * <p>"Every block entity in the chunk" is what the catch-up is offered, which is the claim.
+     * What the comparison is made over is every block entity in the chunk <em>that stands in this
+     * arena</em>: the framework's arenas are closer together than a chunk is wide, so the rest of
+     * the chunk belongs to other tests, and reconstructing and ticking those would be this test
+     * asserting on state it does not own. Both machines this arena places are inside it, and that
+     * the millstone survived the scoping is asserted rather than assumed.
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
@@ -513,7 +546,18 @@ public final class UnloadedCatchUpGameTests {
                 return;
             }
 
-            // 3. The serialised surface, judged against how far this arena moves on its own.
+            // 3. The comparison is scoped to this arena, so what it is scoped to has to still
+            //    contain the machine. A filter that dropped the millstone would leave every
+            //    check above it passing — the sweep still reports the attempt — while the
+            //    comparison underneath compared nothing at all and agreed.
+            if (!comparison.compared.contains(helper.absolutePos(MILLSTONE))) {
+                helper.fail("the comparison is scoped to this arena and the millstone is not in"
+                        + " what that left, so the two arms were run over " + comparison.compared
+                        + " and the match below says nothing about the machine");
+                return;
+            }
+
+            // 4. The serialised surface, judged against how far this arena moves on its own.
             //    Bit equality is the claim, and where it holds the noise floor is empty and this
             //    is exactly bit equality. Where it does not, the comparison still has to say
             //    something true: a key the arena wanders on between two identical runs cannot be
@@ -534,7 +578,7 @@ public final class UnloadedCatchUpGameTests {
                 return;
             }
 
-            // 4. The wider surface, whose divergence must be confined to live fields.
+            // 5. The wider surface, whose divergence must be confined to live fields.
             List<String> serialised = new ArrayList<>();
             Set<String> fields = new LinkedHashSet<>();
             for (String line : comparison.deepDifferences) {
@@ -552,7 +596,7 @@ public final class UnloadedCatchUpGameTests {
                 return;
             }
 
-            // 5. The first guard, asserted on what was actually handed over.
+            // 6. The first guard, asserted on what was actually handed over.
             if (ChunkCatchUp.minDispatchedTicks() < 1) {
                 helper.fail("a non-positive tick count reached the catch-up: minDispatched="
                         + ChunkCatchUp.minDispatchedTicks());
@@ -2411,6 +2455,9 @@ public final class UnloadedCatchUpGameTests {
         @Nullable
         private MillstoneSubject subject;
         private long target = Long.MIN_VALUE;
+        private BoundingBox arena = BoundingBox.fromCorners(BlockPos.ZERO, BlockPos.ZERO);
+        /** The positions both arms were run over, which is what the arena scoping left. */
+        private List<BlockPos> compared = List.of();
 
         @Nullable
         private ChunkCatchUp.Attempt attemptAt(BlockPos pos) {
@@ -2430,6 +2477,7 @@ public final class UnloadedCatchUpGameTests {
             this.helper = helper;
             this.subject = subject;
             this.target = chunk.toLong();
+            this.arena = arenaBox(helper);
         }
 
         /**
@@ -2447,11 +2495,15 @@ public final class UnloadedCatchUpGameTests {
          */
         @Override
         public void beforeSweep(ServerLevel level, LevelChunk chunk, int dispatched,
-                                List<BlockPos> positions) {
+                                List<BlockPos> offered) {
             if (ran || normalised || helper == null || chunk.getPos().toLong() != target) {
                 return;
             }
             normalised = true;
+            // Scoped to this arena. Arm B is the mod and still gets the whole chunk; what stops
+            // at the arena wall is the reconstruction, the levelling window and everything the
+            // comparison later reads. See within().
+            List<BlockPos> positions = within(arena, offered);
             HolderLookup.Provider registries = level.registryAccess();
             for (BlockPos pos : positions) {
                 BlockEntity blockEntity = level.getBlockEntity(pos);
@@ -2489,8 +2541,9 @@ public final class UnloadedCatchUpGameTests {
             tickWindow(level, positions, dispatched);
             reconstruct(level, positions, registries);
 
-            Meanwhile.LOGGER.info("[unloaded] normalised | chunk={} positions={} window={}",
-                    chunk.getPos(), positions, dispatched);
+            Meanwhile.LOGGER.info("[unloaded] normalised | chunk={} offered={} arena={}"
+                            + " positions={} window={}",
+                    chunk.getPos(), offered.size(), arena, positions, dispatched);
         }
 
         /** One arm: back to the common start, then the window run a tick at a time for real. */
@@ -2527,10 +2580,18 @@ public final class UnloadedCatchUpGameTests {
             // ticks them in; the catch-up instead finishes one machine before starting the next,
             // and the two coincide only because nothing in this arena feeds anything else over
             // time (D8).
+            // Scoped to this arena, on the same terms as beforeSweep. The sweep reports every
+            // position it was offered, which on a shared chunk includes the neighbouring arenas;
+            // running arm A and the replay over those would restore a tag this test recorded onto
+            // a machine belonging to another one, tick a window across it twice, and then read
+            // the result back as a difference about catching up.
             List<BlockPos> order = new ArrayList<>();
             for (ChunkCatchUp.Attempt attempt : result.attempts()) {
-                order.add(attempt.pos());
+                if (arena.isInside(attempt.pos())) {
+                    order.add(attempt.pos());
+                }
             }
+            compared = order;
             // The window arm A runs is how long the chunk was gone, not how much of it the mod
             // decided to spend. Following the dispatch would make an arm that spends nothing
             // agree with a reference that also does nothing, which is the one thing a control
@@ -2571,6 +2632,8 @@ public final class UnloadedCatchUpGameTests {
 
         private String summary() {
             return "comparison | window=" + (sweep == null ? -1 : sweep.dispatched())
+                    + " offered=" + (sweep == null ? -1 : sweep.attempts().size())
+                    + " compared=" + compared
                     + " exact: ticked=" + exactA + " caught-up=" + exactB
                     + " replay=" + exactReplay
                     + " match=" + (exactDifference == null)
