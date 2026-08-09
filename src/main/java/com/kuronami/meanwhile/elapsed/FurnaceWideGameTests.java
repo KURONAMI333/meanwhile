@@ -72,7 +72,9 @@ public final class FurnaceWideGameTests {
         RoundTripImages.install();
         com.kuronami.meanwhile.generic.GenericCatchUp.setRewindDistinction(!rawTurnoverRequested());
         if (!ChunkCatchUp.isInstalled()) {
-            helper.fail("the catch-up is not installed; write meanwhile-catchup.properties");
+            helper.fail("the catch-up is not installed, so this run measures nothing;"
+                    + " ChunkCatchUp.install() is called unconditionally from the mod's"
+                    + " constructor, so reaching this means the mod itself did not load");
             return;
         }
         Trip trip = new Trip(helper);

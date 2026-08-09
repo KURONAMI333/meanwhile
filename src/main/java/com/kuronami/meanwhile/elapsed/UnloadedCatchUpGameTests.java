@@ -637,7 +637,9 @@ public final class UnloadedCatchUpGameTests {
     public static void debtIsPaidInInstalmentsAndOnlyOnce(GameTestHelper helper) {
         RoundTripImages.install();
         if (!ChunkCatchUp.isInstalled()) {
-            helper.fail("the catch-up is not installed; write meanwhile-catchup.properties");
+            helper.fail("the catch-up is not installed, so this run measures nothing;"
+                    + " ChunkCatchUp.install() is called unconditionally from the mod's"
+                    + " constructor, so reaching this means the mod itself did not load");
             return;
         }
         Instalments probe = new Instalments(helper, new int[]{0, ChunkCatchUp.SLICE_TICKS}, true);
@@ -1652,7 +1654,9 @@ public final class UnloadedCatchUpGameTests {
     public static void roundTripCatchUpMatchesRoundTripTicking(GameTestHelper helper) {
         RoundTripImages.install();
         if (!ChunkCatchUp.isInstalled()) {
-            helper.fail("the catch-up is not installed; write meanwhile-catchup.properties");
+            helper.fail("the catch-up is not installed, so this run measures nothing;"
+                    + " ChunkCatchUp.install() is called unconditionally from the mod's"
+                    + " constructor, so reaching this means the mod itself did not load");
             return;
         }
         Duel duel = new Duel(helper);
@@ -2924,8 +2928,9 @@ public final class UnloadedCatchUpGameTests {
         RoundTripImages.install();
         ChunkCatchUp.setMode(mode);
         if (!ChunkCatchUp.isInstalled()) {
-            helper.fail("the catch-up is not installed, so this run measures nothing; write "
-                    + "meanwhile-catchup.properties next to the project or in run/");
+            helper.fail("the catch-up is not installed, so this run measures nothing;"
+                    + " ChunkCatchUp.install() is called unconditionally from the mod's"
+                    + " constructor, so reaching this means the mod itself did not load");
             return;
         }
         Trip trip = new Trip(helper, wait, comparison);
