@@ -2447,6 +2447,25 @@ public final class UnloadedCatchUpGameTests {
             }
             reconstruct(level, positions, registries);
 
+            // Then the same window ticked once and thrown away, and the reconstruction applied
+            // again. This costs a window of ticking and it buys the only thing that made the
+            // three arms unlike each other besides the catch-up: their ordinal position.
+            //
+            // Measured, not supposed. reconstructionIdempotenceDiagnostic runs the restore three
+            // times with nothing ticked and gets the same bytes every time, and runs
+            // restore-and-tick three times and gets a kinetic network that disagrees with itself
+            // between the first pass and the second and agrees from the second on. Arm B is the
+            // first pass, arm A the second, the replay the third — so the floor arm A and the
+            // replay define cannot contain a difference that settles after one pass, and the
+            // signal arm A and arm B define is bound to report it, for every arm, whether or not
+            // anything jumped. That is the whole of the Network disagreement all five of these
+            // comparisons have carried since the arena was built.
+            //
+            // What it does not cost: both arms still start from the tag recorded above, which is
+            // the one that came back through disk, and the restore is idempotent on the bytes.
+            tickWindow(level, positions, dispatched);
+            reconstruct(level, positions, registries);
+
             Meanwhile.LOGGER.info("[unloaded] normalised | chunk={} positions={} window={}",
                     chunk.getPos(), positions, dispatched);
         }
