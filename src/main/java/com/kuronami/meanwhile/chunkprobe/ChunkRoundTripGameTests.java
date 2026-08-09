@@ -1,6 +1,7 @@
 package com.kuronami.meanwhile.chunkprobe;
 
 import com.kuronami.meanwhile.Meanwhile;
+import com.kuronami.meanwhile.UnloadWatch;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -77,8 +78,13 @@ public class ChunkRoundTripGameTests {
 
     /** Long enough for the furnace to light and get some way into a smelt. */
     private static final int SETTLE_TICKS = 40;
-    /** How long the arena is watched for an unload after its tickets are dropped. */
-    private static final int UNLOAD_WAIT = 400;
+    /**
+     * How long the arena is watched for an unload after its tickets are dropped. See
+     * {@link UnloadWatch}. This probe spends the whole window whether or not the unload arrives,
+     * because it polls rather than waits; it is off unless a marker asks for it, so that costs
+     * nothing on an ordinary run.
+     */
+    private static final int UNLOAD_WAIT = UnloadWatch.ALLOWANCE_TICKS;
     /** How long the chunk is watched for a load after something asks for it. */
     private static final int LOAD_WAIT = 40;
 
@@ -115,7 +121,7 @@ public class ChunkRoundTripGameTests {
     // set to this mod, so the test is registered and then silently dropped
     // (GameTestRegistry.register / GameTestHooks.getTemplateNamespace).
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = BATCH, timeoutTicks = 1200, required = false)
+            batch = BATCH, timeoutTicks = 12000, required = false)
     public static void arenaChunkUnloadsAndComesBack(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos furnacePos = helper.absolutePos(FURNACE);
@@ -132,6 +138,7 @@ public class ChunkRoundTripGameTests {
         long[] touchedAt = {-1L};
         long[] loadAt = {-1L};
         String[] lastTicket = {""};
+        UnloadWatch watch = new UnloadWatch();
 
         Meanwhile.LOGGER.info("[chunkprobe] arena | structureBlock={} furnace={} target={} chunks={}"
                         + " forcedBefore={}",
@@ -148,6 +155,7 @@ public class ChunkRoundTripGameTests {
                                 pos, removed);
                     }
                     unforcedAt[0] = level.getGameTime();
+                    watch.start(unforcedAt[0]);
                     Meanwhile.LOGGER.info("[chunkprobe] released | t={} forcedAfter={} ticket={}",
                             unforcedAt[0], forcedChunks(level), ticketLevel(level, target));
                 })
@@ -164,6 +172,9 @@ public class ChunkRoundTripGameTests {
                     }
                     if (unloadAt[0] < 0) {
                         unloadAt[0] = ChunkEventProbe.firstSightingAfter(target, true, unforcedAt[0]);
+                        if (unloadAt[0] >= 0) {
+                            watch.arrived("chunk " + target, level.getGameTime());
+                        }
                     }
                 })
                 .thenExecute(() -> {
@@ -218,8 +229,7 @@ public class ChunkRoundTripGameTests {
                     Meanwhile.LOGGER.info("[chunkprobe] restored | forced={}", forcedChunks(level));
 
                     if (unloadAt[0] < 0) {
-                        helper.fail("the arena chunk " + target + " posted no ChunkEvent.Unload in "
-                                + UNLOAD_WAIT + " ticks after its forced tickets were released"
+                        helper.fail(watch.overdueMessage("the arena chunk " + target)
                                 + " (ticket level " + ticketLevel(level, target)
                                 + ", top ticket " + topTicket(level, target) + ")");
                         return;

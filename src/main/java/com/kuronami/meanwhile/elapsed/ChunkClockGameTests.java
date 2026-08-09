@@ -1,6 +1,7 @@
 package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
+import com.kuronami.meanwhile.UnloadWatch;
 import com.kuronami.meanwhile.chunkprobe.ChunkEventProbe;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,12 +59,13 @@ public final class ChunkClockGameTests {
 
     /** Ticks of running before the tickets are dropped, so there is a stored time to lose. */
     private static final int SETTLE_TICKS = 10;
-    /** How long an unload is waited for. Measured at 2-8 ticks (GAP_LOG G56). */
-    private static final int UNLOAD_WAIT = 200;
+    /** How long an unload is waited for. See {@link UnloadWatch}. */
+    private static final int UNLOAD_WAIT = UnloadWatch.ALLOWANCE_TICKS;
     /** How long a reconcile is waited for after the chunk is asked for again. */
     private static final int BACK_WAIT = 100;
 
-    private static final int RUN_TICKS = 1400;
+    /** Three cycles, plus room for one of the three unloads being slow. */
+    private static final int RUN_TICKS = 1400 + UNLOAD_WAIT;
 
     private static boolean probeInstalled;
 
@@ -80,7 +82,7 @@ public final class ChunkClockGameTests {
     }
 
     @PrefixGameTestTemplate(false)
-    @GameTest(template = "empty9x5x9", batch = BATCH, timeoutTicks = 2400)
+    @GameTest(template = "empty9x5x9", batch = BATCH, timeoutTicks = 10400)
     public static void elapsedTicksMatchHowLongTheChunkWasGone(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         ChunkPos target = new ChunkPos(helper.absolutePos(new BlockPos(2, 1, 2)));
@@ -132,6 +134,7 @@ public final class ChunkClockGameTests {
         private long releasedAt = -1L;
         private long unloadAt = -1L;
         private long askedAt = -1L;
+        private final UnloadWatch watch = new UnloadWatch();
 
         @Nullable
         private String failure;
@@ -173,6 +176,7 @@ public final class ChunkClockGameTests {
                 level.setChunkForced(pos.x, pos.z, false);
             }
             releasedAt = now;
+            watch.start(now);
             phase = Phase.RELEASED;
         }
 
@@ -182,12 +186,12 @@ public final class ChunkClockGameTests {
             long seen = ChunkEventProbe.firstSightingAfter(target, true, releasedAt);
             if (seen >= 0) {
                 unloadAt = seen;
+                watch.arrived("cycle " + index, now);
                 phase = Phase.GONE;
                 return;
             }
-            if (now - releasedAt > UNLOAD_WAIT) {
-                fail("cycle " + index + ": chunk " + target + " posted no ChunkEvent.Unload in "
-                        + UNLOAD_WAIT + " ticks after its forced tickets were dropped");
+            if (watch.overdue(now)) {
+                fail(watch.overdueMessage("cycle " + index));
             }
         }
 

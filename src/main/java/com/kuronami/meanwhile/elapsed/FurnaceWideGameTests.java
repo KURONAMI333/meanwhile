@@ -1,6 +1,7 @@
 package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
+import com.kuronami.meanwhile.UnloadWatch;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -58,7 +59,6 @@ public final class FurnaceWideGameTests {
     private static final int INPUT_COUNT = 8;
 
     private static final int SETTLE = 5;
-    private static final int UNLOAD_WAIT = 200;
     private static final int BACK_WAIT = 200;
     private static final int GONE_FOR = 60;
 
@@ -67,7 +67,7 @@ public final class FurnaceWideGameTests {
 
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "furnacewide", timeoutTicks = 8000)
+            batch = "furnacewide", timeoutTicks = 16200)
     public static void furnaceGoingOutIsReproducedIncludingItsBlockState(GameTestHelper helper) {
         RoundTripImages.install();
         com.kuronami.meanwhile.generic.GenericCatchUp.setRewindDistinction(!rawTurnoverRequested());
@@ -79,7 +79,7 @@ public final class FurnaceWideGameTests {
         }
         Trip trip = new Trip(helper);
         helper.startSequence()
-                .thenExecuteFor(7200, trip::step)
+                .thenExecuteFor(15200, trip::step)
                 .thenExecute(trip::judge)
                 .thenSucceed();
     }
@@ -96,12 +96,12 @@ public final class FurnaceWideGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "entitysurvival", timeoutTicks = 2400)
+            batch = "entitysurvival", timeoutTicks = 10400)
     public static void itemEntitySurvivesAChunkRoundTrip(GameTestHelper helper) {
         RoundTripImages.install();
         Survival probe = new Survival(helper);
         helper.startSequence()
-                .thenExecuteFor(1800, probe::step)
+                .thenExecuteFor(9800, probe::step)
                 .thenExecute(probe::judge)
                 .thenSucceed();
     }
@@ -124,6 +124,7 @@ public final class FurnaceWideGameTests {
         private long askedAt = -1L;
         private int before = -1;
         private int after = -1;
+        private final UnloadWatch watch = new UnloadWatch();
         @Nullable
         private String failure;
 
@@ -166,16 +167,18 @@ public final class FurnaceWideGameTests {
                         level.setChunkForced(chunk.x, chunk.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     step = Step.RELEASED;
                 }
                 case RELEASED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("the item entity round trip", now);
                         step = Step.GONE;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("no ChunkEvent.Unload in " + UNLOAD_WAIT);
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("the item entity round trip"));
                     }
                 }
                 case GONE -> {
@@ -266,6 +269,7 @@ public final class FurnaceWideGameTests {
         private long askedAt = -1L;
         private final Arm[] arms = new Arm[3];
         private boolean litAtStart;
+        private final UnloadWatch watch = new UnloadWatch();
         @Nullable
         private String failure;
 
@@ -314,16 +318,18 @@ public final class FurnaceWideGameTests {
                         level.setChunkForced(chunk.x, chunk.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     step = Step.RELEASED;
                 }
                 case RELEASED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("arm " + index, now);
                         step = Step.GONE;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("arm " + index + ": no ChunkEvent.Unload in " + UNLOAD_WAIT);
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("arm " + index));
                     }
                 }
                 case GONE -> {

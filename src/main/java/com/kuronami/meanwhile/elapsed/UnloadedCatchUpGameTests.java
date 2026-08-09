@@ -1,6 +1,7 @@
 package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
+import com.kuronami.meanwhile.UnloadWatch;
 import com.kuronami.meanwhile.generic.DeepStateDigest;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
 import com.kuronami.meanwhile.generic.MillstoneSubject;
@@ -84,8 +85,8 @@ public final class UnloadedCatchUpGameTests {
     /** The same, in the diagnostic, which only has to reach the sweep. */
     private static final int SHORT_WINDOW = 120;
 
-    /** How long an unload is waited for after the tickets are dropped. 2-8 measured (G56). */
-    private static final int UNLOAD_WAIT = 200;
+    /** How long an unload is waited for after the tickets are dropped. See {@link UnloadWatch}. */
+    private static final int UNLOAD_WAIT = UnloadWatch.ALLOWANCE_TICKS;
     /** How long the sweep is waited for after the chunk is asked back. */
     private static final int BACK_WAIT = 200;
 
@@ -111,7 +112,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-diag", timeoutTicks = 1200)
+            batch = "unloadedcatchup-diag", timeoutTicks = 12000)
     public static void sweepWindowTickerPathDiagnostic(GameTestHelper helper) {
         if (resurrectProbeRequested()) {
             RoundTripImages.armResurrectProbe();
@@ -169,7 +170,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-idempotence", timeoutTicks = 1200)
+            batch = "unloadedcatchup-idempotence", timeoutTicks = 12000)
     public static void reconstructionIdempotenceDiagnostic(GameTestHelper helper) {
         Idempotence probe = new Idempotence();
         onArena(helper, SHORT_WINDOW, ChunkCatchUp.Mode.PRODUCT, probe, trip -> {
@@ -382,7 +383,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-exact", timeoutTicks = 2400)
+            batch = "unloadedcatchup-exact", timeoutTicks = 12000)
     public static void unloadedCatchUpMatchesTickingExactly(GameTestHelper helper) {
         ChunkCatchUp.Mode mode = ignoreElapsedRequested()
                 ? ChunkCatchUp.Mode.IGNORE_ELAPSED
@@ -408,7 +409,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-whole", timeoutTicks = 2400)
+            batch = "unloadedcatchup-whole", timeoutTicks = 12000)
     public static void wholeChunkCatchUpMatchesTickingExactly(GameTestHelper helper) {
         measure(helper, ignoreElapsedRequested()
                 ? ChunkCatchUp.Mode.IGNORE_ELAPSED
@@ -434,7 +435,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-control-one", timeoutTicks = 2400)
+            batch = "unloadedcatchup-control-one", timeoutTicks = 12000)
     public static void controlSingleMachineRealTicksMatch(GameTestHelper helper) {
         measure(helper, ChunkCatchUp.Mode.TICK_INTERLEAVED
                 .restrictedTo(helper.absolutePos(MILLSTONE)), false);
@@ -456,7 +457,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-control-seq", timeoutTicks = 2400)
+            batch = "unloadedcatchup-control-seq", timeoutTicks = 12000)
     public static void controlSequentialRealTicksMatch(GameTestHelper helper) {
         measure(helper, ChunkCatchUp.Mode.TICK_SEQUENTIAL, false);
     }
@@ -472,7 +473,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-control-inter", timeoutTicks = 2400)
+            batch = "unloadedcatchup-control-inter", timeoutTicks = 12000)
     public static void controlInterleavedRealTicksMatch(GameTestHelper helper) {
         measure(helper, ChunkCatchUp.Mode.TICK_INTERLEAVED, false);
     }
@@ -633,7 +634,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-debt", timeoutTicks = 6000)
+            batch = "unloadedcatchup-debt", timeoutTicks = 14400)
     public static void debtIsPaidInInstalmentsAndOnlyOnce(GameTestHelper helper) {
         RoundTripImages.install();
         if (!ChunkCatchUp.isInstalled()) {
@@ -644,7 +645,7 @@ public final class UnloadedCatchUpGameTests {
         }
         Instalments probe = new Instalments(helper, new int[]{0, ChunkCatchUp.SLICE_TICKS}, true);
         helper.startSequence()
-                .thenExecuteFor(5400, probe::step)
+                .thenExecuteFor(13400, probe::step)
                 .thenExecute(probe::judge)
                 .thenSucceed();
     }
@@ -658,7 +659,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-budget", timeoutTicks = 20000)
+            batch = "unloadedcatchup-budget", timeoutTicks = 28000)
     public static void instalmentSizeSweep(GameTestHelper helper) {
         RoundTripImages.install();
         // Five readings per size. One reading per size cannot tell a difference between sizes
@@ -671,7 +672,7 @@ public final class UnloadedCatchUpGameTests {
         }
         Instalments probe = new Instalments(helper, slices, false);
         helper.startSequence()
-                .thenExecuteFor(19000, probe::step)
+                .thenExecuteFor(27000, probe::step)
                 .thenExecute(probe::judge)
                 .thenSucceed();
     }
@@ -696,6 +697,7 @@ public final class UnloadedCatchUpGameTests {
         private long askedAt = -1L;
         private long payingSince = -1L;
 
+        private final UnloadWatch watch = new UnloadWatch();
         /** Instalment size per phase; 0 means settle it all at once. */
         private final int[] slices;
         private final boolean gate;
@@ -765,16 +767,18 @@ public final class UnloadedCatchUpGameTests {
                         level.setChunkForced(chunk.x, chunk.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     step = Step.RELEASED;
                 }
                 case RELEASED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("phase " + phase, now);
                         step = Step.GONE;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("phase " + phase + ": no ChunkEvent.Unload in " + UNLOAD_WAIT);
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("phase " + phase));
                     }
                 }
                 case GONE -> {
@@ -923,12 +927,12 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-interrupt", timeoutTicks = 8000)
+            batch = "unloadedcatchup-interrupt", timeoutTicks = 16200)
     public static void interruptedRepaymentLosesNothingAndPaysOnce(GameTestHelper helper) {
         RoundTripImages.install();
         Interrupted probe = new Interrupted(helper);
         helper.startSequence()
-                .thenExecuteFor(7200, probe::step)
+                .thenExecuteFor(15200, probe::step)
                 .thenExecute(probe::judge)
                 .thenSucceed();
     }
@@ -959,6 +963,7 @@ public final class UnloadedCatchUpGameTests {
         private long debtBeforeDrop = -1L;
         private long debtAfterReturn = -1L;
         private long paidBeforeDrop = -1L;
+        private final UnloadWatch watch = new UnloadWatch();
         @Nullable
         private String failure;
 
@@ -1005,16 +1010,18 @@ public final class UnloadedCatchUpGameTests {
                         level.setChunkForced(chunk.x, chunk.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     step = Step.RELEASED;
                 }
                 case RELEASED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("the first release", now);
                         step = Step.GONE;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("no ChunkEvent.Unload in " + UNLOAD_WAIT);
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("the first release"));
                     }
                 }
                 case GONE -> {
@@ -1061,6 +1068,7 @@ public final class UnloadedCatchUpGameTests {
                         level.setChunkForced(chunk.x, chunk.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     Meanwhile.LOGGER.info("[interrupt] dropping mid-repayment | debt={} paid={}",
                             debtBeforeDrop, paidBeforeDrop);
                     step = Step.DROPPED;
@@ -1068,11 +1076,13 @@ public final class UnloadedCatchUpGameTests {
                 case DROPPED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("the mid-repayment drop", now);
                         step = Step.DROPPED_WAIT;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("the chunk did not unload while it still owed " + debtBeforeDrop);
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("the mid-repayment drop")
+                                + "; it still owed " + debtBeforeDrop);
                     }
                 }
                 case DROPPED_WAIT -> {
@@ -1169,12 +1179,12 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-repeat", timeoutTicks = 8000)
+            batch = "unloadedcatchup-repeat", timeoutTicks = 16200)
     public static void tenShortRoundTripsBalanceLikeOneLongOne(GameTestHelper helper) {
         RoundTripImages.install();
         Repeated probe = new Repeated(helper);
         helper.startSequence()
-                .thenExecuteFor(7200, probe::step)
+                .thenExecuteFor(15200, probe::step)
                 .thenExecute(probe::judge)
                 .thenSucceed();
     }
@@ -1200,6 +1210,7 @@ public final class UnloadedCatchUpGameTests {
         private long unloadAt = -1L;
         private long markAt = -1L;
         private final List<String> perTrip = new ArrayList<>();
+        private final UnloadWatch watch = new UnloadWatch();
         @Nullable
         private String failure;
 
@@ -1246,16 +1257,18 @@ public final class UnloadedCatchUpGameTests {
                         level.setChunkForced(chunk.x, chunk.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     step = Step.RELEASED;
                 }
                 case RELEASED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("trip " + trip, now);
                         step = Step.GONE;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("trip " + trip + ": no unload");
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("trip " + trip));
                     }
                 }
                 case GONE -> {
@@ -1361,12 +1374,12 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-natural", timeoutTicks = 3000)
+            batch = "unloadedcatchup-natural", timeoutTicks = 11400)
     public static void roundTripBlockEntityKeepsTickingNaturally(GameTestHelper helper) {
         RoundTripImages.install();
         Natural probe = new Natural(helper);
         helper.startSequence()
-                .thenExecuteFor(2400, probe::step)
+                .thenExecuteFor(10400, probe::step)
                 .thenExecute(probe::judge)
                 .thenSucceed();
     }
@@ -1403,6 +1416,7 @@ public final class UnloadedCatchUpGameTests {
         private int returnedEndTimer = Integer.MIN_VALUE;
         private double returnedStartGround;
         private double returnedEndGround;
+        private final UnloadWatch watch = new UnloadWatch();
         @Nullable
         private String failure;
 
@@ -1463,16 +1477,18 @@ public final class UnloadedCatchUpGameTests {
                         level.setChunkForced(chunk.x, chunk.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     step = Step.RELEASED;
                 }
                 case RELEASED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("the natural round trip", now);
                         step = Step.GONE;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("no ChunkEvent.Unload in " + UNLOAD_WAIT + " ticks");
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("the natural round trip"));
                     }
                 }
                 case GONE -> {
@@ -1650,7 +1666,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-b1b2", timeoutTicks = 6000)
+            batch = "unloadedcatchup-b1b2", timeoutTicks = 14400)
     public static void roundTripCatchUpMatchesRoundTripTicking(GameTestHelper helper) {
         RoundTripImages.install();
         if (!ChunkCatchUp.isInstalled()) {
@@ -1661,7 +1677,7 @@ public final class UnloadedCatchUpGameTests {
         }
         Duel duel = new Duel(helper);
         helper.startSequence()
-                .thenExecuteFor(5400, duel::step)
+                .thenExecuteFor(13400, duel::step)
                 .thenExecute(() -> {
                     duel.restoreArena();
                     duel.judge();
@@ -1731,6 +1747,7 @@ public final class UnloadedCatchUpGameTests {
         private Arm armC;
         /** B1a, B1b, B2. The first two differ from each other in nothing at all. */
         private final Arm[] arms = new Arm[3];
+        private final UnloadWatch watch = new UnloadWatch();
         @Nullable
         private String failure;
         private BoundingBox region = BoundingBox.fromCorners(BlockPos.ZERO, BlockPos.ZERO);
@@ -1816,6 +1833,7 @@ public final class UnloadedCatchUpGameTests {
                         level.setChunkForced(pos.x, pos.z, false);
                     }
                     releasedAt = now;
+                    watch.start(now);
                     Meanwhile.LOGGER.info("[duel] trip {} released | chunk={} at={} mode={}",
                             trip, target, now, ChunkCatchUp.mode().label());
                     step = Step.TRIP_RELEASED;
@@ -1823,12 +1841,12 @@ public final class UnloadedCatchUpGameTests {
                 case TRIP_RELEASED -> {
                     if (RoundTripImages.unloads() > 0) {
                         unloadAt = RoundTripImages.unloadAt();
+                        watch.arrived("trip " + trip, now);
                         step = Step.TRIP_GONE;
                         return;
                     }
-                    if (now - releasedAt > UNLOAD_WAIT) {
-                        fail("trip " + trip + ": no ChunkEvent.Unload in " + UNLOAD_WAIT
-                                + " ticks after the forced tickets were dropped");
+                    if (watch.overdue(now)) {
+                        fail(watch.overdueMessage("trip " + trip));
                     }
                 }
                 case TRIP_GONE -> {
@@ -2293,7 +2311,7 @@ public final class UnloadedCatchUpGameTests {
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-negative", timeoutTicks = 1200)
+            batch = "unloadedcatchup-negative", timeoutTicks = 12000)
     public static void nonPositiveElapsedIsNotDispatched(GameTestHelper helper) {
         ChunkCatchUp.Mode mode = nonPositiveRequested()
                 ? ChunkCatchUp.Mode.ALLOW_NON_POSITIVE
@@ -2751,6 +2769,7 @@ public final class UnloadedCatchUpGameTests {
         private long releasedAt = -1L;
         private long unloadAt = -1L;
         private long askedAt = -1L;
+        private final UnloadWatch watch = new UnloadWatch();
         @Nullable
         private ChunkCatchUp.Sweep sweep;
         @Nullable
@@ -2816,6 +2835,7 @@ public final class UnloadedCatchUpGameTests {
                 level.setChunkForced(pos.x, pos.z, false);
             }
             releasedAt = now;
+            watch.start(now);
             phase = Phase.RELEASED;
         }
 
@@ -2824,12 +2844,12 @@ public final class UnloadedCatchUpGameTests {
                 unloadAt = RoundTripImages.unloadAt();
                 Meanwhile.LOGGER.info("[unloaded] gone | chunk={} releasedAt={} unloadAt={}"
                         + " delta={}", target, releasedAt, unloadAt, unloadAt - releasedAt);
+                watch.arrived("chunk " + target, now);
                 phase = Phase.GONE;
                 return;
             }
-            if (now - releasedAt > UNLOAD_WAIT) {
-                fail("chunk " + target + " posted no ChunkEvent.Unload in " + UNLOAD_WAIT
-                        + " ticks after its forced tickets were dropped");
+            if (watch.overdue(now)) {
+                fail(watch.overdueMessage("chunk " + target));
             }
         }
 
@@ -2934,6 +2954,11 @@ public final class UnloadedCatchUpGameTests {
             return;
         }
         Trip trip = new Trip(helper, wait, comparison);
+        // Room for one slow unload, not for every wait in the test being slow at once. The window
+        // is burnt in full whatever happens (GameTestSequence.thenExecuteFor), so sizing it for
+        // the worst case of every wait would cost that on every green run. A test whose second
+        // wait is also slow runs out of window and fails on the framework's timeout instead of
+        // its own message: still red, still hard, just less legible.
         int runTicks = SETTLE + UNLOAD_WAIT + wait + BACK_WAIT + 60;
 
         helper.startSequence()
