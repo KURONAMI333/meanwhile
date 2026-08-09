@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# One GameTest run, with the log kept and the harness lines diffed against the baseline.
+# One GameTest run, with the log kept and the observations diffed against the two baselines:
+# the retired loaded-chunk scheme's (BASELINE_meanwhile_harness.txt) and the type-agnostic
+# catch-up's (BASELINE_meanwhile_v2.txt). Neither replaces the other.
 # Usage: _run_gate.sh <name>
 set -u
 cd "$(dirname "$0")" || exit 1
@@ -15,7 +17,21 @@ grep -o "GAME TESTS COMPLETE.*\|All [0-9]* required tests passed.*\|[0-9]* requi
 grep -c "Game test server shutting down" "$LOG" | sed 's/^/shutdown lines: /'
 
 grep -o "\[harness\].*" "$LOG" | sed 's/\r$//' | sort -u > "ucu_${NAME}_harness.txt"
-echo "--- baseline diff ---"
+echo "--- harness baseline diff (retired loaded-chunk scheme) ---"
 diff "ucu_${NAME}_harness.txt" ../_handoff/BASELINE_meanwhile_harness.txt
-echo "--- baseline diff lines: $(diff "ucu_${NAME}_harness.txt" ../_handoff/BASELINE_meanwhile_harness.txt | wc -l)"
+echo "--- harness baseline diff lines: $(diff "ucu_${NAME}_harness.txt" ../_handoff/BASELINE_meanwhile_harness.txt | wc -l)"
+
+# The v2 observations. Which line kinds are in and which two fields are masked is written out
+# in the header of BASELINE_meanwhile_v2.txt; keep the two in step.
+grep -oE "\[(corpus|furnace|furnacewide|debt|scaffold|guard|duel)\] .*" "$LOG" \
+  | sed 's/\r$//' \
+  | grep -E "^\[(corpus|furnace|furnacewide)\] |^\[debt\] RESULT |^\[scaffold\] (GATE|RESULT|arm) |^\[guard\] threshold |^\[duel\] WIDE shape " \
+  | sed -e 's/\$\$Lambda\/0x[0-9a-f]*/$$Lambda\/<jvm>/g' -e 's/worstDrain=[0-9]*us/worstDrain=<us>/g' \
+  | LC_ALL=C sort -u > "ucu_${NAME}_v2.txt"
+EXPECTED="$(mktemp)"
+grep -v '^#' ../_handoff/BASELINE_meanwhile_v2.txt > "$EXPECTED"
+echo "--- v2 baseline diff (type-agnostic catch-up) ---"
+diff "ucu_${NAME}_v2.txt" "$EXPECTED"
+echo "--- v2 baseline diff lines: $(diff "ucu_${NAME}_v2.txt" "$EXPECTED" | wc -l)"
+rm -f "$EXPECTED"
 exit $EXIT
