@@ -3,8 +3,6 @@ package com.kuronami.meanwhile.elapsed;
 import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
 import com.kuronami.meanwhile.guard.CatchUpGuard;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -69,23 +67,13 @@ import org.jetbrains.annotations.Nullable;
  * settles nothing.
  *
  * <p>What that costs the verification suite is worth stating, because it is the reason a marker
- * file used to stand here. A development world in {@code run/} carries
+ * file used to stand here and no longer does. A development world in {@code run/} carries
  * {@code last_seen_game_time} on its chunks from every previous run, so the catch-up can fire on
  * whatever a test arena inherits, at a count that depends on what the last run left behind. The
  * answer is a run directory that is not carried between runs — which is what a fresh clone is —
  * not a switch that turns the product off.
  */
 public final class ChunkCatchUp {
-
-    /**
-     * The marker file the catch-up used to be installed behind.
-     *
-     * <p>Nothing installs on it any more — the catch-up is the mod and is unconditional. Kept
-     * with {@link #isRequested()} because the same marker still names the arm of a measurement
-     * that a run can be asked for, and because the pattern is shared with {@code TickCostBench}
-     * and {@code ChunkRoundTripGameTests}, which are still opt-in.
-     */
-    private static final String MARKER = "meanwhile-catchup.properties";
 
     /**
      * Which parts of the behaviour are in force.
@@ -329,19 +317,6 @@ public final class ChunkCatchUp {
     private static volatile int drains;
 
     private ChunkCatchUp() {
-    }
-
-    public static boolean isRequested() {
-        Path cwd = Path.of("").toAbsolutePath();
-        for (Path candidate : List.of(
-                cwd.resolve(MARKER),
-                cwd.resolve("run").resolve(MARKER),
-                cwd.getParent() == null ? cwd.resolve(MARKER) : cwd.getParent().resolve(MARKER))) {
-            if (Files.isRegularFile(candidate)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public static void install() {

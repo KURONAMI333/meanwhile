@@ -2,9 +2,6 @@ package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.gametest.framework.GameTest;
@@ -279,20 +276,5 @@ public final class FurnaceSpanGameTests {
     private static AbstractFurnaceBlockEntity furnace(GameTestHelper helper) {
         return helper.getLevel().getBlockEntity(helper.absolutePos(FURNACE))
                 instanceof AbstractFurnaceBlockEntity found ? found : null;
-    }
-
-    /** Same marker as the catch-up itself; there is no separate switch for this. */
-    public static boolean isRequested() {
-        Path cwd = Path.of("").toAbsolutePath();
-        for (Path candidate : List.of(
-                cwd.resolve("meanwhile-catchup.properties"),
-                cwd.resolve("run").resolve("meanwhile-catchup.properties"),
-                cwd.getParent() == null ? cwd.resolve("meanwhile-catchup.properties")
-                        : cwd.getParent().resolve("meanwhile-catchup.properties"))) {
-            if (Files.isRegularFile(candidate)) {
-                return true;
-            }
-        }
-        return false;
     }
 }
