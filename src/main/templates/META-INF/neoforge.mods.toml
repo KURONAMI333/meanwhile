@@ -1,0 +1,37 @@
+# Meanwhile - neoforge.mods.toml
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+issueTrackerURL="https://github.com/KURONAMI333/meanwhile/issues"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+authors="${mod_authors}"
+displayURL="https://github.com/KURONAMI333/meanwhile"
+description='''
+${mod_description}
+'''
+
+# The loaded-chunk scheme (BlockStateAnalogReadMixin, BoundTickingBlockEntityMixin,
+# LevelChunkSaveMixin, LevelChunkWriteMixin, ServerLevelSchedulerMixin,
+# ServerPlayerObservationMixin) is retired from the product; the catch-up-on-load scheme in
+# elapsed/ is the product now. The six mixins still exist, moved to
+# meanwhile-loaded.mixins.json. Uncomment to bring them back:
+#[[mixins]]
+#config="meanwhile-loaded.mixins.json"
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version},)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"
