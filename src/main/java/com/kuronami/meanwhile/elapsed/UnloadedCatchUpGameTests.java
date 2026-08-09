@@ -68,7 +68,7 @@ import org.jetbrains.annotations.Nullable;
  *
  * <p>No {@code @GameTestHolder}: NeoForge finds holders by scanning the classpath, and an
  * annotated class would join the standing suite permanently. Registered from {@link Meanwhile}
- * only when Create is present and the catch-up marker file asks for it, with an explicit
+ * whenever Create is present, which the build resolves, with an explicit
  * {@code templateNamespace} — without one the namespace falls back to {@code minecraft} and the
  * test is registered and then silently dropped (GAP_LOG G59).
  *
@@ -322,23 +322,20 @@ public final class UnloadedCatchUpGameTests {
      * serialised line joining them is the catch-up being wrong in a way that survives a restart.
      *
      * <p>Restricted to the millstone. The motor is in the region and in the digest, but neither
-     * arm ticks it, which is the arrangement the standing Create tests already use. The reason is
-     * measured rather than assumed: with both machines in play,
-     * {@link #controlInterleavedRealTicksMatch} — where the two arms perform exactly the same
-     * operations in the same order and differ only in that one of them was rebuilt from a
-     * recorded tag — disagrees on Create's shared kinetic network. A comparison whose own control
-     * cannot agree with itself cannot decide anything about the catch-up.
+     * arm ticks it, which is the arrangement the standing Create tests already use. This is the
+     * narrow case of {@link #wholeChunkCatchUpMatchesTickingExactly}: one machine offered to the
+     * catch-up rather than everything the chunk came back with. Both are asserted, because a
+     * difference that only shows when the whole chunk is offered is a different fact from one
+     * that shows on a single machine.
      *
-     * <p><b>Superseded as a gate, and optional for that reason.</b> Its reference arm is a
-     * machine rebuilt from a recorded tag, and a rebuild is not what the mod does to anything —
-     * {@link #roundTripCatchUpMatchesRoundTripTicking} puts the same real unload and reload in
-     * front of both arms instead, which leaves the catch-up as the only difference between them.
-     * This one is kept running because what it disagrees on is printed every run, and a
-     * disagreement that spreads past the kinetic network would be worth seeing.
+     * <p>{@link #roundTripCatchUpMatchesRoundTripTicking} is the stronger statement: it puts the
+     * same real unload and reload in front of both arms, so neither is rebuilt from a recorded
+     * tag at all. This one is narrower and still binding, and it is where a disagreement is
+     * named key by key rather than as a hash.
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-exact", timeoutTicks = 2400, required = false)
+            batch = "unloadedcatchup-exact", timeoutTicks = 2400)
     public static void unloadedCatchUpMatchesTickingExactly(GameTestHelper helper) {
         ChunkCatchUp.Mode mode = ignoreElapsedRequested()
                 ? ChunkCatchUp.Mode.IGNORE_ELAPSED
@@ -349,21 +346,15 @@ public final class UnloadedCatchUpGameTests {
     /**
      * The same, with the catch-up offered every block entity in the chunk, which is the product.
      *
-     * <p>Optional, and the reason is a measurement rather than a concession. Both real-ticking
-     * controls fail this arena in exactly the same way the catch-up does — the same lines, the
-     * same values — so what this comparison is reporting is the arena, not the mod: a millstone
-     * and its motor belong to one kinetic network, the network is a shared object rather than
-     * anything either machine serialises alone, and an arm that has ticked both leaves it in a
-     * state the next arm cannot be rebuilt into from NBT.
-     *
-     * <p>It is kept, and kept running, because the state it disagrees on is stated in the log
-     * every run: if the disagreement ever spreads beyond the network bookkeeping — to the
-     * inventories, to the grinding progress — that is a different fact and it should be visible
-     * the moment it happens.
+     * <p>This and the three controls spent a long time reporting a disagreement on Create's
+     * kinetic network that belonged to the arena rather than to the mod, which is why all five
+     * were optional. The arena is levelled before arm B runs now, and what it was reporting
+     * is measured rather than supposed: see {@link #reconstructionIdempotenceDiagnostic}.
+     * The comparison comes out bit-for-bit equal, and is binding for that reason.
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-whole", timeoutTicks = 2400, required = false)
+            batch = "unloadedcatchup-whole", timeoutTicks = 2400)
     public static void wholeChunkCatchUpMatchesTickingExactly(GameTestHelper helper) {
         measure(helper, ignoreElapsedRequested()
                 ? ChunkCatchUp.Mode.IGNORE_ELAPSED
@@ -377,18 +368,19 @@ public final class UnloadedCatchUpGameTests {
      * else is touched. The only thing left between them is that one of them was rebuilt from a
      * recorded tag and re-attached to its network first.
      *
-     * <p>It does not agree, and that is what it is for. A rebuild from NBT is not the same
-     * machine: {@code KineticBlockEntity#read} clears every kinetic field and then, when
-     * {@code wasMoved} is set on the live object it is being loaded into, returns without
-     * restoring any of them. So the reference arm of
-     * {@link #unloadedCatchUpMatchesTickingExactly} starts somewhere the other arm never was, and
-     * that comparison inherits the difference whether or not anything jumps — which is why the
-     * gate moved to {@link #roundTripCatchUpMatchesRoundTripTicking}, where both arms come back
-     * through disk instead.
+     * <p>It has to agree, and that is what it is for. Two arms that do the same thing and land
+     * anywhere apart mean the instrument is moving under the measurement, and every result
+     * taken on this arena would be an artefact that looks exactly like a catch-up bug.
+     *
+     * <p>It did not agree for a long time. What it was reporting was not a rebuild from NBT
+     * failing to reproduce the machine: the restore is idempotent on the bytes, three rounds
+     * of it in a row leaving the same tag every time. It was the arena's own first pass of
+     * ticking after a reload, which lands on kinetic bookkeeping no later pass lands on.
+     * {@link #reconstructionIdempotenceDiagnostic} measures both halves of that.
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-control-one", timeoutTicks = 2400, required = false)
+            batch = "unloadedcatchup-control-one", timeoutTicks = 2400)
     public static void controlSingleMachineRealTicksMatch(GameTestHelper helper) {
         measure(helper, ChunkCatchUp.Mode.TICK_INTERLEAVED
                 .restrictedTo(helper.absolutePos(MILLSTONE)), false);
@@ -404,12 +396,13 @@ public final class UnloadedCatchUpGameTests {
      * reconstruction were not the state arm B was actually in, every result on this arena would
      * be an artefact and would look exactly like a catch-up bug.
      *
-     * <p>Optional. It answers a question about the instrument rather than about the mod, and an
-     * instrument that turns out to be imperfect is a finding to report, not a red standing suite.
+     * <p>Binding. It answers a question about the instrument rather than about the mod, and an
+     * instrument that stops agreeing with itself invalidates every other result taken on this
+     * arena, which is exactly what a standing suite should go red on.
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-control-seq", timeoutTicks = 2400, required = false)
+            batch = "unloadedcatchup-control-seq", timeoutTicks = 2400)
     public static void controlSequentialRealTicksMatch(GameTestHelper helper) {
         measure(helper, ChunkCatchUp.Mode.TICK_SEQUENTIAL, false);
     }
@@ -421,11 +414,11 @@ public final class UnloadedCatchUpGameTests {
      * once. If this one matches and the sequential one does not, then finishing a machine before
      * starting its neighbour is what moved the state, and the jumping is not implicated at all.
      *
-     * <p>Optional, for the same reason as its pair.
+     * <p>Binding, for the same reason as its pair.
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-control-inter", timeoutTicks = 2400, required = false)
+            batch = "unloadedcatchup-control-inter", timeoutTicks = 2400)
     public static void controlInterleavedRealTicksMatch(GameTestHelper helper) {
         measure(helper, ChunkCatchUp.Mode.TICK_INTERLEAVED, false);
     }
