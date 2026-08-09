@@ -26,6 +26,17 @@ sourceSets.main.resources {
     exclude("src/generated/**/.cache") // datagen cache files
 }
 
+// Everything a run measures with, and nothing the product is. `jar` packs sourceSets.main
+// alone, so the test classes, the harness, the subjects and the GameTest structure template
+// here are absent from what is distributed — verifyNoTestScaffoldingInJar below is what keeps
+// that true rather than a reading of this comment.
+sourceSets {
+    gametest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
 repositories {
     mavenCentral()
 
@@ -80,6 +91,7 @@ neoForge {
         gameTestServer {
             type = "gameTestServer"
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            sourceSet = sourceSets.gametest
         }
 
         data {
@@ -114,8 +126,14 @@ neoForge {
         // multi mod projects should define one per mod
         "${mod_id}" {
             sourceSet(sourceSets.main)
+            // GameTest registration scans the mod's own files for @GameTestHolder and for the
+            // second @Mod entrypoint that decides what a run measures, so the measurement
+            // source set has to belong to the same mod. This says nothing about the jar.
+            sourceSet(sourceSets.gametest)
         }
     }
+
+    addModdingDependenciesTo(sourceSets.gametest)
 }
 
 // Sets up a dependency configuration called 'localRuntime'.
@@ -124,6 +142,10 @@ neoForge {
 // "optional", meaning it will not be pulled by dependents of this mod.
 configurations {
     runtimeClasspath.extendsFrom localRuntime
+    // runGameTestServer runs off the gametest source set, so its runtime classpath is the one
+    // that has to carry Create. Without this the main gate's subject is absent, createIsPresent()
+    // answers no, and the run is green with the Create-dependent tests silently unregistered.
+    gametestRuntimeClasspath.extendsFrom localRuntime
 }
 
 dependencies {
@@ -169,6 +191,12 @@ dependencies {
 
 tasks.named('test', Test) {
     useJUnitPlatform()
+}
+
+// Measurement code that stops compiling is a gate that stopped gating, so the build says so
+// even though it does not run it. Running it is runGameTestServer.
+tasks.named('check') {
+    dependsOn tasks.named('compileGametestJava')
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
