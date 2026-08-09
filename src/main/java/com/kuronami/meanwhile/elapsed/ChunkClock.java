@@ -324,6 +324,30 @@ public final class ChunkClock {
     }
 
     /**
+     * Test-only: put a chunk back into the state it is in the tick after it loads, so that the
+     * next sweep reads its stored time back and reconciles it again.
+     *
+     * <p>A chunk is reconciled once, when it arrives. Everything downstream of that — the owed
+     * count, the queue, the slices, the block entities being caught up — is reachable in a test
+     * only after a real unload and load, which takes hundreds of ticks and destroys anything the
+     * test put in the chunk that does not survive being written out and read back. Paired with
+     * {@link #setStampOffset} this reproduces the same arrival with the chunk's contents intact.
+     * Nothing in the product calls it.
+     */
+    public static void rearm(ServerLevel level, ChunkPos pos) {
+        Map<Long, Tracked> tracked = TRACKED.get(level.dimension());
+        Tracked chunk = tracked == null ? null : tracked.get(pos.toLong());
+        if (chunk == null) {
+            Meanwhile.LOGGER.warn("[clock] rearm | chunk={} dim={} is not tracked", pos,
+                    level.dimension().location());
+            return;
+        }
+        chunk.reconciled = false;
+        Meanwhile.LOGGER.info("[clock] rearm | chunk={} dim={}", pos,
+                level.dimension().location());
+    }
+
+    /**
      * Test-only: write a wrong time onto one chunk, to produce the stored-time-in-the-future case
      * a crash leaves behind. An offset of zero puts it back.
      */

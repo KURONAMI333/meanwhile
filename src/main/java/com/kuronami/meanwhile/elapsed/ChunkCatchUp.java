@@ -2,6 +2,7 @@ package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
+import com.kuronami.meanwhile.guard.CatchUpGuard;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -303,6 +304,10 @@ public final class ChunkCatchUp {
     private static volatile int reentryRefused;
     private static volatile boolean reentryReported;
 
+    /** Slices abandoned because something outside the ticker call threw. Logged once, counted. */
+    private static volatile int drainFailures;
+    private static volatile boolean drainFailureReported;
+
     /** Cumulative, per chunk, so that paying the same absence twice can be asserted against. */
     private static final Map<Long, Long> owedTotal = new ConcurrentHashMap<>();
     private static final Map<Long, Long> paidTotal = new ConcurrentHashMap<>();
@@ -464,7 +469,29 @@ public final class ChunkCatchUp {
                     break;
                 }
                 jobsTaken++;
-                spentRealTicks += pay(level, job);
+                // The backstop. Everything a third party's code can throw is caught a level
+                // down, next to the ticker call, which is where the block entity that threw can
+                // still be named; this catches what is left — the scaffolding around it, and
+                // anything a future call site forgets. One chunk failing must not take the rest
+                // of the queue, and none of it may reach LevelTickEvent.Post.
+                try {
+                    spentRealTicks += pay(level, job);
+                } catch (Throwable thrown) {
+                    drainFailures++;
+                    // The job was taken off the queue and the slice it was in the middle of is
+                    // not coming back. Drop the half-finished bookkeeping so the next
+                    // reconciliation builds a fresh one; what the chunk is owed rides on the
+                    // chunk itself and is untouched by this.
+                    PENDING.remove(job.chunkPos());
+                    if (!drainFailureReported) {
+                        drainFailureReported = true;
+                        Meanwhile.LOGGER.warn("[catchup] drain failed | chunk={} dim={} | {} |"
+                                        + " the chunk keeps what it is owed and is offered again"
+                                        + " the next time it is reconciled; further failures are"
+                                        + " counted and not logged",
+                                new ChunkPos(job.chunkPos()), job.dimension().location(), thrown);
+                    }
+                }
             }
         } finally {
             draining = false;
@@ -669,22 +696,38 @@ public final class ChunkCatchUp {
             String ticker = tickerName(level, pos);
 
             Attempt attempt;
-            if (how == Spend.CATCH_UP) {
-                GenericCatchUp.Result result =
-                        GenericCatchUp.catchUp(level, pos, dispatched, GenericCatchUp.Mode.SAFE);
-                BlockEntity now = level.getBlockEntity(pos);
-                attempt = new Attempt(pos, block, type, ticker, dispatched, result.declined(),
-                        result.declineReason(), result.realTicks(), result.jumps(),
-                        result.jumpedTicks(), String.valueOf(result.refusals()),
-                        String.valueOf(result.writes()), before,
-                        now == null ? null : now.saveWithoutMetadata(registries));
-            } else {
-                int ran = GenericCatchUp.tick(level, pos, dispatched);
-                BlockEntity now = level.getBlockEntity(pos);
-                attempt = new Attempt(pos, block, type, ticker, dispatched, ran == 0,
-                        ran == 0 ? "nothing tickable at " + pos : null, ran, 0, 0, "{}",
-                        "{control}", before,
-                        now == null ? null : now.saveWithoutMetadata(registries));
+            try {
+                if (CatchUpGuard.isIsolated(level.dimension(), pos)) {
+                    // Already threw its way out of catch-up. Still walked and still reported, so
+                    // that a chunk of isolated machines does not read as a chunk of nothing.
+                    attempt = new Attempt(pos, block, type, ticker, dispatched, true,
+                            "isolated by the guard", 0, 0, 0, "{}", "{}", before, before);
+                } else if (how == Spend.CATCH_UP) {
+                    GenericCatchUp.Result result = GenericCatchUp.catchUp(level, pos, dispatched,
+                            GenericCatchUp.Mode.SAFE);
+                    BlockEntity now = level.getBlockEntity(pos);
+                    attempt = new Attempt(pos, block, type, ticker, dispatched, result.declined(),
+                            result.declineReason(), result.realTicks(), result.jumps(),
+                            result.jumpedTicks(), String.valueOf(result.refusals()),
+                            String.valueOf(result.writes()), before,
+                            now == null ? null : now.saveWithoutMetadata(registries));
+                } else {
+                    int ran = GenericCatchUp.tick(level, pos, dispatched);
+                    BlockEntity now = level.getBlockEntity(pos);
+                    attempt = new Attempt(pos, block, type, ticker, dispatched, ran == 0,
+                            ran == 0 ? "nothing tickable at " + pos : null, ran, 0, 0, "{}",
+                            "{control}", before,
+                            now == null ? null : now.saveWithoutMetadata(registries));
+                }
+            } catch (Throwable thrown) {
+                // The only place a third party's code runs on this mod's route. Vanilla's own
+                // ticking loop catches here; the route the catch-up added does not, and it sits
+                // inside LevelTickEvent.Post, so without this the server goes down.
+                boolean isolated = CatchUpGuard.record(level.dimension(), pos, block, thrown);
+                attempt = new Attempt(pos, block, type, ticker, dispatched, true,
+                        (isolated ? "threw and was isolated: " : "threw: ")
+                                + thrown.getClass().getName(),
+                        0, 0, 0, "{}", "{}", before, before);
             }
             attempts.add(attempt);
 
@@ -733,10 +776,24 @@ public final class ChunkCatchUp {
         }
 
         int[] ran = new int[present.size()];
+        boolean[] isolated = new boolean[present.size()];
         for (int tick = 0; tick < dispatched; tick++) {
             for (int i = 0; i < present.size(); i++) {
-                if (GenericCatchUp.tickOnce(level, present.get(i))) {
-                    ran[i]++;
+                BlockPos pos = present.get(i);
+                if (isolated[i] || CatchUpGuard.isIsolated(level.dimension(), pos)) {
+                    isolated[i] = true;
+                    continue;
+                }
+                // Guarded on the same terms as the real path. This arm is a control and never
+                // the mod, but it reaches the same third-party tickers by the same route, so
+                // leaving it bare would put the hole back for every run that measures.
+                try {
+                    if (GenericCatchUp.tickOnce(level, pos)) {
+                        ran[i]++;
+                    }
+                } catch (Throwable thrown) {
+                    isolated[i] = CatchUpGuard.record(level.dimension(), pos, blocks.get(i),
+                            thrown);
                 }
             }
         }
@@ -881,6 +938,11 @@ public final class ChunkCatchUp {
      */
     public static int reentryRefused() {
         return reentryRefused;
+    }
+
+    /** Slices abandoned by the drain's backstop. Zero is the only figure a run should show. */
+    public static int drainFailures() {
+        return drainFailures;
     }
 
     /** The longest single drain, in microseconds. This is the number a stall would show up in. */
