@@ -28,6 +28,16 @@ sourceSets.main.resources {
 
 repositories {
     mavenCentral()
+
+    // Create is resolved here rather than dropped into run/mods by hand. The main gate
+    // (UnloadedCatchUpGameTests) has no subject without it, run/ is not under version control,
+    // and a jar cannot be committed, so a hand-placed one makes the gate unreachable from a
+    // fresh clone.
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content { includeGroup "maven.modrinth" }
+    }
 }
 
 base {
@@ -123,6 +133,16 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // The subject the main gate measures on. A millstone is a block entity whose ticker carries
+    // real work across a window, which is the thing the catch-up claims to reproduce, and no
+    // vanilla block entity is a substitute. localRuntime rather than runtimeOnly: it has to be
+    // there when the gate runs and must not become a dependency of anything that consumes this
+    // mod. Nothing is compiled against Create — every call into it goes through reflection — so
+    // this is a runtime artefact only.
+    //
+    // With it, the standard runGameTestServer registers 54 required tests; without it, 32.
+    localRuntime "maven.modrinth:create:${create_version}"
 
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
