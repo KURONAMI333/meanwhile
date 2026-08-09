@@ -62,17 +62,28 @@ import org.jetbrains.annotations.Nullable;
  *       (GAP_LOG G58).</li>
  * </ul>
  *
- * <h3>Why a marker file decides whether this is installed</h3>
- * <p>The development world in {@code run/} carries {@code last_seen_game_time} on its chunks from
- * every previous run, because {@link ChunkClock} stamps unconditionally. An always-installed
- * catch-up would therefore fire on whatever furnaces the standing suite's arenas happen to
- * inherit, at an elapsed count that depends on what the last run left behind. The standing suite
- * is a gate, and a gate that depends on the previous run is not one. Write
- * {@code meanwhile-catchup.properties} next to the project or in {@code run/} to install it.
+ * <h3>Installed unconditionally</h3>
+ * <p>This is the mod. {@link ChunkClock} stamps every running chunk whether or not anything reads
+ * the stamp back, so a build in which this is not installed pays the whole cost of the clock and
+ * settles nothing.
+ *
+ * <p>What that costs the verification suite is worth stating, because it is the reason a marker
+ * file used to stand here. A development world in {@code run/} carries
+ * {@code last_seen_game_time} on its chunks from every previous run, so the catch-up can fire on
+ * whatever a test arena inherits, at a count that depends on what the last run left behind. The
+ * answer is a run directory that is not carried between runs — which is what a fresh clone is —
+ * not a switch that turns the product off.
  */
 public final class ChunkCatchUp {
 
-    /** Written next to the project (and/or in the run directory) to install the catch-up. */
+    /**
+     * The marker file the catch-up used to be installed behind.
+     *
+     * <p>Nothing installs on it any more — the catch-up is the mod and is unconditional. Kept
+     * with {@link #isRequested()} because the same marker still names the arm of a measurement
+     * that a run can be asked for, and because the pattern is shared with {@code TickCostBench}
+     * and {@code ChunkRoundTripGameTests}, which are still opt-in.
+     */
     private static final String MARKER = "meanwhile-catchup.properties";
 
     /**

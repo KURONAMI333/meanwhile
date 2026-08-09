@@ -25,10 +25,18 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Probe mod: verifies that CropBlock growth can be reproduced in closed form
- * over N random ticks instead of simulating each one.
+ * Catches a chunk up on the block entity progress it missed while it was away.
  *
- * Nothing is registered. The whole payload is the GameTest suite.
+ * <p>{@link ChunkClock} writes the game time onto every chunk that is running, and reads it back
+ * when the chunk returns; {@link ChunkCatchUp} takes the difference and spends it over whatever
+ * block entities the chunk holds, knowing nothing about their types. Both are installed
+ * unconditionally. There is no configuration and no marker file deciding whether the mod does its
+ * work — installing it is the whole of using it.
+ *
+ * <p>What marker files still decide is measurement: the tick-cost bench, the chunk round-trip
+ * probe and the retired loaded-chunk scheme's tests all change what a standard run measures, so
+ * they stay opt-in. The type-agnostic catch-up's own tests need a Create machine as their
+ * subject, so those are registered when Create is present and not otherwise.
  */
 @Mod(Meanwhile.MODID)
 public class Meanwhile {
@@ -53,31 +61,32 @@ public class Meanwhile {
         ChunkClockAttachments.register(modEventBus);
         ChunkClock.install();
 
-        // Spending the difference the clock works out, and only when a marker file asks. The
-        // development world in run/ carries last_seen_game_time on its chunks from every previous
-        // run, so an always-installed catch-up would fire on whatever the standing suite's arenas
-        // inherited, at a count that depends on what the last run left behind. Its own tests come
-        // with it, and only when Create is there to be the subject — same reason as the bench for
-        // not carrying @GameTestHolder.
-        if (ChunkCatchUp.isRequested()) {
-            ChunkCatchUp.install();
-            // What the generic catch-up can skip on a burning furnace, which is vanilla and needs
-            // no Create to measure.
-            modEventBus.addListener((RegisterGameTestsEvent event) -> {
-                event.register(FurnaceSpanGameTests.class);
-                event.register(FurnaceWideGameTests.class);
-                // The population survey. Needs no Create, but sees whatever mods are loaded.
-                event.register(CorpusSweepGameTests.class);
-            });
-            if (createIsPresent()) {
-                modEventBus.addListener((RegisterGameTestsEvent event) ->
-                        event.register(UnloadedCatchUpGameTests.class));
-                LOGGER.info("[catchup] marker found and Create is present, registering the"
-                        + " unloaded catch-up tests");
-            } else {
-                LOGGER.info("[catchup] marker found, but Create is absent so there is no subject"
-                        + " to measure against");
-            }
+        // Spending the difference the clock works out. Unconditional: this is the mod, and a
+        // clock with nothing reading it back is a chunk marked unsaved every tick for no result.
+        ChunkCatchUp.install();
+
+        // What the generic catch-up can skip on a burning furnace, what a full round trip does
+        // to one, and the population survey over whatever types are loaded. All vanilla, so they
+        // go into every standard run. No @GameTestHolder on any of them: NeoForge finds holders
+        // by scanning the classpath, and registering them here is what keeps the decision in one
+        // readable place next to the Create-dependent ones below.
+        modEventBus.addListener((RegisterGameTestsEvent event) -> {
+            event.register(FurnaceSpanGameTests.class);
+            event.register(FurnaceWideGameTests.class);
+            event.register(CorpusSweepGameTests.class);
+        });
+        LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
+                + " wide, corpus sweep");
+
+        // The unloaded catch-up gate is measured against a Create machine, so it exists only
+        // when Create does.
+        if (createIsPresent()) {
+            modEventBus.addListener((RegisterGameTestsEvent event) ->
+                    event.register(UnloadedCatchUpGameTests.class));
+            LOGGER.info("[catchup] Create is present, registering the unloaded catch-up tests");
+        } else {
+            LOGGER.info("[catchup] Create is absent, so the unloaded catch-up tests have no"
+                    + " subject to measure against and are not registered");
         }
 
         // The tick-cost bench, and only when a marker file asks for it. Registered here
