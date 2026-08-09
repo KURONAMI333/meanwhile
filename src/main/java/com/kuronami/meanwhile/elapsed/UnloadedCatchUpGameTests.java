@@ -147,6 +147,166 @@ public final class UnloadedCatchUpGameTests {
         });
     }
 
+    /**
+     * Is the reconstruction every arm starts from idempotent?
+     *
+     * <p>The question this answers is which of the two things arm B and arm A differ in is
+     * responsible for the kinetic network disagreement both of them and all three real-ticking
+     * controls report. They differ in the catch-up, and they also differ in their ordinal
+     * position: arm B is reconstructed first, out of block entities that came off disk moments
+     * ago and have not ticked since, and arm A and the replay are reconstructed after that.
+     * The noise floor is arm A against the replay, so a difference that only appears the first
+     * time a reconstruction is applied cannot land in it and lands in the signal instead — for
+     * every arm, whether or not anything jumped.
+     *
+     * <p>So: three reconstructions, back to back, in the tick the chunk came back, with nothing
+     * ticked between them and the catch-up not yet reached. If the first disagrees with the
+     * second and the second agrees with the third, the disagreement belongs to the arena and
+     * neither the catch-up nor ticking is involved in it at all.
+     *
+     * <p>Reports rather than asserts. It measures the instrument, and what it finds is a fact
+     * about the instrument to act on rather than a regression to go red on.
+     */
+    @PrefixGameTestTemplate(false)
+    @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
+            batch = "unloadedcatchup-idempotence", timeoutTicks = 1200)
+    public static void reconstructionIdempotenceDiagnostic(GameTestHelper helper) {
+        Idempotence probe = new Idempotence();
+        onArena(helper, SHORT_WINDOW, ChunkCatchUp.Mode.PRODUCT, probe, trip -> {
+            if (trip.sweep == null) {
+                helper.fail("the chunk came back but the catch-up was never offered it: "
+                        + trip.describe());
+                return;
+            }
+            String vacuous = trip.vacuous();
+            if (vacuous != null) {
+                helper.fail(vacuous);
+                return;
+            }
+            if (!probe.ran) {
+                helper.fail("the sweep never reached the probe, so nothing was reconstructed");
+                return;
+            }
+            probe.report();
+            helper.succeed();
+        });
+    }
+
+    /** Three reconstructions in a row, with nothing ticked between them. */
+    private static final class Idempotence implements ArmedObserver {
+
+        private long target = Long.MIN_VALUE;
+        private boolean ran;
+        private List<String> loadedToFirst = List.of();
+        private List<String> firstToSecond = List.of();
+        private List<String> secondToThird = List.of();
+        private List<String> tickedFirstToSecond = List.of();
+        private List<String> tickedSecondToThird = List.of();
+        private final List<String> stages = new ArrayList<>();
+
+        @Override
+        public void arm(GameTestHelper helper, MillstoneSubject subject, ChunkPos chunk) {
+            this.target = chunk.toLong();
+        }
+
+        @Override
+        public void beforeSweep(ServerLevel level, LevelChunk chunk, int dispatched,
+                                List<BlockPos> positions) {
+            if (ran || chunk.getPos().toLong() != target) {
+                return;
+            }
+            ran = true;
+            HolderLookup.Provider registries = level.registryAccess();
+
+            // The tag every reconstruction restores from, taken once. All three rounds put back
+            // exactly these bytes, so anything they end up disagreeing on came from the live
+            // objects underneath rather than from what was written down.
+            Map<BlockPos, CompoundTag> start = tagsOf(level, positions, registries);
+            Map<BlockPos, CompoundTag> loaded = start;
+            stages.add("as loaded  : " + networksOf(loaded));
+
+            reconstruct(level, positions, start, registries);
+            Map<BlockPos, CompoundTag> first = tagsOf(level, positions, registries);
+            stages.add("after 1st  : " + networksOf(first));
+
+            reconstruct(level, positions, start, registries);
+            Map<BlockPos, CompoundTag> second = tagsOf(level, positions, registries);
+            stages.add("after 2nd  : " + networksOf(second));
+
+            reconstruct(level, positions, start, registries);
+            Map<BlockPos, CompoundTag> third = tagsOf(level, positions, registries);
+            stages.add("after 3rd  : " + networksOf(third));
+
+            loadedToFirst = differingKeys(loaded, first);
+            firstToSecond = differingKeys(first, second);
+            secondToThird = differingKeys(second, third);
+
+            // The same three rounds with the window ticked in each of them. This is arm A run
+            // three times over, with the catch-up never reached and nothing jumped: whatever
+            // these three disagree on is something the arena carries from one pass to the next.
+            // The harness builds its noise floor out of the second pass against the third and
+            // its signal out of the second against the first, so a key that settles after one
+            // pass is a difference the floor cannot contain and the signal must report.
+            reconstruct(level, positions, start, registries);
+            tickWindow(level, positions, dispatched);
+            Map<BlockPos, CompoundTag> pass1 = tagsOf(level, positions, registries);
+            stages.add("ticked 1st : " + networksOf(pass1));
+
+            reconstruct(level, positions, start, registries);
+            tickWindow(level, positions, dispatched);
+            Map<BlockPos, CompoundTag> pass2 = tagsOf(level, positions, registries);
+            stages.add("ticked 2nd : " + networksOf(pass2));
+
+            reconstruct(level, positions, start, registries);
+            tickWindow(level, positions, dispatched);
+            Map<BlockPos, CompoundTag> pass3 = tagsOf(level, positions, registries);
+            stages.add("ticked 3rd : " + networksOf(pass3));
+
+            tickedFirstToSecond = differingKeys(pass1, pass2);
+            tickedSecondToThird = differingKeys(pass2, pass3);
+        }
+
+
+        @Override
+        public void afterSweep(ServerLevel level, LevelChunk chunk, ChunkCatchUp.Sweep result) {
+            // Nothing. The whole question is settled before a single tick is spent.
+        }
+
+        private void report() {
+            for (String stage : stages) {
+                Meanwhile.LOGGER.info("[idempotence] {}", stage);
+            }
+            Meanwhile.LOGGER.info("[idempotence] RESULT restore only | loadedToFirst={}"
+                            + " firstToSecond={} secondToThird={} idempotentFromFirst={}",
+                    loadedToFirst, firstToSecond, secondToThird,
+                    firstToSecond.isEmpty() && secondToThird.isEmpty());
+            Meanwhile.LOGGER.info("[idempotence] RESULT restore and tick | firstToSecond={}"
+                            + " secondToThird={} settlesAfterOnePass={}",
+                    tickedFirstToSecond, tickedSecondToThird,
+                    !tickedFirstToSecond.isEmpty() && tickedSecondToThird.isEmpty());
+        }
+    }
+
+    /** The window, ticked one tick across every position at a time, which is the game's order. */
+    private static void tickWindow(ServerLevel level, List<BlockPos> positions, int window) {
+        for (int tick = 0; tick < window; tick++) {
+            for (BlockPos pos : positions) {
+                GenericCatchUp.tickOnce(level, pos);
+            }
+        }
+    }
+
+    /** The kinetic bookkeeping of each position, which is what the arms disagree on. */
+    private static String networksOf(Map<BlockPos, CompoundTag> tags) {
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<BlockPos, CompoundTag> entry : tags.entrySet()) {
+            CompoundTag tag = entry.getValue();
+            out.add(entry.getKey().toShortString() + "="
+                    + (tag.contains("Network") ? tag.getCompound("Network").toString() : "<none>"));
+        }
+        return out.toString();
+    }
+
     // ---- the measurement -----------------------------------------------------------------------
 
     /**
@@ -1870,6 +2030,14 @@ public final class UnloadedCatchUpGameTests {
             for (String line : wideNoise.subList(0, Math.min(6, wideNoise.size()))) {
                 Meanwhile.LOGGER.info("[duel] WIDE noise sample | {}", line);
             }
+            // The settled side of the wide surface is not asserted on, for the same reason the
+            // narrow settled comparison is not. Counting it and never naming it is a different
+            // thing though: a number with nothing behind it cannot be read later, and a baseline
+            // taken over it would freeze a line nobody has seen. Printed for that reason.
+            for (String line : wideBeyondSettled.subList(0,
+                    Math.min(12, wideBeyondSettled.size()))) {
+                Meanwhile.LOGGER.info("[duel] WIDE settled beyond-noise | {}", line);
+            }
             if (!wideBeyond.isEmpty()) {
                 helper.fail("over nine chunks, block states, entities and scheduled ticks, the"
                         + " caught-up world differs from the ticked one on " + wideBeyond.size()
@@ -2191,7 +2359,17 @@ public final class UnloadedCatchUpGameTests {
      * unwinds through the server's tick rather than through the test, so the results are recorded
      * and judged by the step that follows.
      */
-    private static final class Comparison implements ChunkCatchUp.Observer {
+    /**
+     * An observer the round trip hands its subject to before releasing the chunk.
+     *
+     * <p>The trip has to tell an observer which chunk is the one being measured before anything
+     * is dropped, and the observers that want that differ in what they do with the sweep.
+     */
+    private interface ArmedObserver extends ChunkCatchUp.Observer {
+        void arm(GameTestHelper helper, MillstoneSubject subject, ChunkPos chunk);
+    }
+
+    private static final class Comparison implements ArmedObserver {
 
         @Nullable
         private ChunkCatchUp.Sweep sweep;
@@ -2233,10 +2411,11 @@ public final class UnloadedCatchUpGameTests {
             return null;
         }
 
-        private void arm(GameTestHelper helper, MillstoneSubject subject, ChunkPos target) {
+        @Override
+        public void arm(GameTestHelper helper, MillstoneSubject subject, ChunkPos chunk) {
             this.helper = helper;
             this.subject = subject;
-            this.target = target.toLong();
+            this.target = chunk.toLong();
         }
 
         /**
@@ -2267,6 +2446,7 @@ public final class UnloadedCatchUpGameTests {
                 }
             }
             reconstruct(level, positions, registries);
+
             Meanwhile.LOGGER.info("[unloaded] normalised | chunk={} positions={} window={}",
                     chunk.getPos(), positions, dispatched);
         }
@@ -2275,25 +2455,13 @@ public final class UnloadedCatchUpGameTests {
         private void runWindow(ServerLevel level, List<BlockPos> order,
                                HolderLookup.Provider registries, int window) {
             reconstruct(level, order, registries);
-            for (int tick = 0; tick < window; tick++) {
-                for (BlockPos pos : order) {
-                    GenericCatchUp.tickOnce(level, pos);
-                }
-            }
+            tickWindow(level, order, window);
         }
 
         /** Both arms start here: every recorded tag put back, then every machine re-attached. */
         private void reconstruct(ServerLevel level, List<BlockPos> positions,
                                  HolderLookup.Provider registries) {
-            for (BlockPos pos : positions) {
-                CompoundTag tag = start.get(pos);
-                if (tag != null) {
-                    restore(level, pos, tag, registries);
-                }
-            }
-            for (BlockPos pos : positions) {
-                reattach(level.getBlockEntity(pos));
-            }
+            UnloadedCatchUpGameTests.reconstruct(level, positions, start, registries);
         }
 
         @Override
@@ -2371,6 +2539,21 @@ public final class UnloadedCatchUpGameTests {
                     + " replay=" + groundReplay
                     + " | keys: noise=" + noiseKeys + " signal=" + signalKeys
                     + " beyondNoise=" + beyondNoise;
+        }
+    }
+
+    /** Every recorded tag put back, then every machine re-attached to its kinetic network. */
+    private static void reconstruct(ServerLevel level, List<BlockPos> positions,
+                                    Map<BlockPos, CompoundTag> start,
+                                    HolderLookup.Provider registries) {
+        for (BlockPos pos : positions) {
+            CompoundTag tag = start.get(pos);
+            if (tag != null) {
+                restore(level, pos, tag, registries);
+            }
+        }
+        for (BlockPos pos : positions) {
+            reattach(level.getBlockEntity(pos));
         }
     }
 
@@ -2452,7 +2635,7 @@ public final class UnloadedCatchUpGameTests {
         private final MillstoneSubject subject = new MillstoneSubject();
         private final int wait;
         @Nullable
-        private final Comparison comparison;
+        private final ArmedObserver comparison;
 
         private Phase phase = Phase.PLACING;
         private int settleLeft = SETTLE;
@@ -2464,7 +2647,7 @@ public final class UnloadedCatchUpGameTests {
         @Nullable
         private String failure;
 
-        private Trip(GameTestHelper helper, int wait, @Nullable Comparison comparison) {
+        private Trip(GameTestHelper helper, int wait, @Nullable ArmedObserver comparison) {
             this.helper = helper;
             this.level = helper.getLevel();
             this.target = new ChunkPos(helper.absolutePos(MILLSTONE));
@@ -2632,7 +2815,7 @@ public final class UnloadedCatchUpGameTests {
      * count or an observer wired into the next test.
      */
     private static void onArena(GameTestHelper helper, int wait, ChunkCatchUp.Mode mode,
-                                @Nullable Comparison comparison, Consumer<Trip> body) {
+                                @Nullable ArmedObserver comparison, Consumer<Trip> body) {
         RoundTripImages.install();
         ChunkCatchUp.setMode(mode);
         if (!ChunkCatchUp.isInstalled()) {
