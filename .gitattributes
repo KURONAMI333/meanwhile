@@ -1,4 +1,6 @@
 *.bat   eol=crlf
+# core.autocrlf is on here, so a fresh clone would otherwise get `#!/usr/bin/env bash\r`.
+*.sh          text eol=lf
 *.gradle      text eol=lf
 *.properties  text eol=lf
 *.java        text eol=lf
