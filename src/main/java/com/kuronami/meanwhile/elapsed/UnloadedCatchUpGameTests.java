@@ -188,6 +188,17 @@ public final class UnloadedCatchUpGameTests {
                 return;
             }
             probe.report();
+            // The one thing here that is asserted rather than reported. Every comparison in this
+            // class levels its arena by running a pass and throwing it away, which only works
+            // while a second pass and a third land in the same place. If they stop doing that,
+            // the five go red on a machine's serialised state and say nothing about why. This
+            // says why, in the place that measured it.
+            if (!probe.settles()) {
+                helper.fail("the arena does not settle, so levelling it by running a pass and"
+                        + " discarding it no longer puts two arms anywhere comparable: "
+                        + probe.settlement());
+                return;
+            }
             helper.succeed();
         });
     }
@@ -270,6 +281,16 @@ public final class UnloadedCatchUpGameTests {
         @Override
         public void afterSweep(ServerLevel level, LevelChunk chunk, ChunkCatchUp.Sweep result) {
             // Nothing. The whole question is settled before a single tick is spent.
+        }
+
+        /** Whether the arena settles at all, which every comparison in this class depends on. */
+        private boolean settles() {
+            return secondToThird.isEmpty() && tickedSecondToThird.isEmpty();
+        }
+
+        private String settlement() {
+            return "restore secondToThird=" + secondToThird
+                    + " ticked secondToThird=" + tickedSecondToThird;
         }
 
         private void report() {
@@ -2454,8 +2475,17 @@ public final class UnloadedCatchUpGameTests {
             // anything jumped. That is the whole of the Network disagreement all five of these
             // comparisons have carried since the arena was built.
             //
-            // What it does not cost: both arms still start from the tag recorded above, which is
-            // the one that came back through disk, and the restore is idempotent on the bytes.
+            // What it costs, said plainly, because it deepens the concession above rather than
+            // avoiding it. In the game the sweep reaches machines that have not had their first
+            // tick pass since the reload — that asymmetry is the whole reason this is here — and
+            // arm B is now deliberately moved past that point. So these five comparisons measure
+            // the catch-up on a settled machine, which is not the state the product meets. Both
+            // arms do still start from the tag recorded above, the one that came back through
+            // disk, and the restore is idempotent on the bytes.
+            //
+            // What covers the state the product does meet is
+            // roundTripCatchUpMatchesRoundTripTicking, which puts a real unload and reload in
+            // front of both of its arms and reconstructs neither. It is binding and it is green.
             tickWindow(level, positions, dispatched);
             reconstruct(level, positions, registries);
 
