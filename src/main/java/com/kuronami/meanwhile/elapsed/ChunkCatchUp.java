@@ -1,6 +1,7 @@
 package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
+import com.kuronami.meanwhile.compat.CompatibilityCoordinator;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
 import com.kuronami.meanwhile.guard.CatchUpGuard;
 import java.util.ArrayDeque;
@@ -22,6 +23,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -374,6 +376,14 @@ public final class ChunkCatchUp {
 
     /** What an {@link Attempt}'s descriptive fields say when no {@link Observer} asked for them. */
     private static final String UNRECORDED = "<not recorded>";
+
+    /**
+     * Why a block entity another mod is catching up was walked past.
+     *
+     * <p>Named rather than inlined because two walks produce it and a gate reads it back.
+     */
+    private static final String DEFERRED_REASON =
+            "deferred to " + CompatibilityCoordinator.UNLOADED_ACTIVITY;
 
     /** Slices abandoned because something outside the ticker call threw. Logged once, counted. */
     private static volatile int drainFailures;
@@ -959,7 +969,13 @@ public final class ChunkCatchUp {
 
             Attempt attempt;
             try {
-                if (CatchUpGuard.isIsolated(level.dimension(), pos)) {
+                if (isDeferred(blockEntity)) {
+                    // Another mod's machine this run. Walked and reported like any other, and not
+                    // touched: no tick, no serialisation, no jump. The window it was owed is spent
+                    // by whoever owns it, which is the whole of what deferring means here.
+                    attempt = new Attempt(pos, block, type, ticker, dispatched, true,
+                            DEFERRED_REASON, 0, 0, 0, "{}", "{}", before, before);
+                } else if (CatchUpGuard.isIsolated(level.dimension(), pos)) {
                     // Already threw its way out of catch-up. Still walked and still reported, so
                     // that a chunk of isolated machines does not read as a chunk of nothing.
                     attempt = new Attempt(pos, block, type, ticker, dispatched, true,
@@ -1046,12 +1062,16 @@ public final class ChunkCatchUp {
         List<String> tickers = new ArrayList<>();
         List<CompoundTag> befores = new ArrayList<>();
         List<BlockPos> present = new ArrayList<>();
+        List<Boolean> deferrals = new ArrayList<>();
         for (BlockPos pos : positions) {
             BlockEntity blockEntity = chunk.getBlockEntities().get(pos);
             if (blockEntity == null) {
                 continue;
             }
             present.add(pos);
+            // Asked here, once, rather than inside the tick loop: the answer cannot change while
+            // the loop runs, and this arm runs the loop once per tick of the window.
+            deferrals.add(isDeferred(blockEntity));
             befores.add(blockEntity.saveWithoutMetadata(registries));
             blocks.add(BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock())
                     .toString());
@@ -1064,6 +1084,9 @@ public final class ChunkCatchUp {
         for (int tick = 0; tick < dispatched; tick++) {
             for (int i = 0; i < present.size(); i++) {
                 BlockPos pos = present.get(i);
+                if (deferrals.get(i)) {
+                    continue;
+                }
                 if (isolated[i] || CatchUpGuard.isIsolated(level.dimension(), pos)) {
                     isolated[i] = true;
                     continue;
@@ -1089,8 +1112,10 @@ public final class ChunkCatchUp {
             BlockPos pos = present.get(i);
             BlockEntity now = level.getBlockEntity(pos);
             attempts.add(new Attempt(pos, blocks.get(i), types.get(i), tickers.get(i), dispatched,
-                    ran[i] == 0, ran[i] == 0 ? "nothing tickable at " + pos : null, ran[i], 0, 0,
-                    "{}", "{control}", befores.get(i),
+                    ran[i] == 0,
+                    deferrals.get(i) ? DEFERRED_REASON
+                            : ran[i] == 0 ? "nothing tickable at " + pos : null,
+                    ran[i], 0, 0, "{}", "{control}", befores.get(i),
                     now == null ? null : now.saveWithoutMetadata(registries)));
             if (ran[i] == 0) {
                 declined++;
@@ -1114,6 +1139,19 @@ public final class ChunkCatchUp {
                                      HolderLookup.Provider registries) {
         BlockEntity now = level.getBlockEntity(pos);
         return now == null ? null : now.saveWithoutMetadata(registries);
+    }
+
+    /**
+     * Whether this block entity is another mod's job this run.
+     *
+     * <p>Two reads and no allocation, per block entity per slice, and both are false in every run
+     * where nothing overlapping is installed: the flag is checked first so that the type test is
+     * not even reached in the ordinary case. Which types these are and why the set is this small
+     * is {@link CompatibilityCoordinator}'s subject.
+     */
+    private static boolean isDeferred(BlockEntity blockEntity) {
+        return CompatibilityCoordinator.defersFurnaces()
+                && blockEntity instanceof AbstractFurnaceBlockEntity;
     }
 
     private static List<BlockPos> positionsOf(LevelChunk chunk) {

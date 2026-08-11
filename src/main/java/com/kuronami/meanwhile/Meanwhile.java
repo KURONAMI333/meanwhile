@@ -1,5 +1,6 @@
 package com.kuronami.meanwhile;
 
+import com.kuronami.meanwhile.compat.CompatibilityCoordinator;
 import com.kuronami.meanwhile.elapsed.ChunkCatchUp;
 import com.kuronami.meanwhile.elapsed.ChunkClock;
 import com.kuronami.meanwhile.elapsed.ChunkClockAttachments;
@@ -8,6 +9,7 @@ import com.mojang.logging.LogUtils;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
 
 /**
@@ -42,5 +44,9 @@ public class Meanwhile {
         // Spending the difference the clock works out. Unconditional: this is the mod, and a
         // clock with nothing reading it back is a chunk marked unsaved every tick for no result.
         ChunkCatchUp.install();
+
+        // Which block entities another mod is already catching up. Registered before any world
+        // exists and decided once the server starts, so the drain never has to ask.
+        NeoForge.EVENT_BUS.register(CompatibilityCoordinator.class);
     }
 }
