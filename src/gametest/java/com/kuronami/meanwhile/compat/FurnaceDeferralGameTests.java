@@ -119,6 +119,7 @@ public final class FurnaceDeferralGameTests {
         private Step step = Step.SETTLING;
         private int countdown = SETTLE;
         private int dispatchesAtStart;
+        private boolean deferralBefore;
 
         private Drive(GameTestHelper helper, boolean defer) {
             this.helper = helper;
@@ -162,7 +163,11 @@ public final class FurnaceDeferralGameTests {
             load();
 
             // Set before the window is handed over, and the only thing that differs between the
-            // two arms. Everything below this line is identical in both.
+            // two arms. Everything below this line is identical in both. What it was is kept, so
+            // that leaving puts it back rather than forcing it off: a run where the other mod is
+            // genuinely installed must not have its deferral switched off for good by this gate
+            // happening to run early.
+            deferralBefore = CompatibilityCoordinator.defersFurnaces();
             CompatibilityCoordinator.setDeferringFurnaces(defer);
 
             // The arenas of other tests stand in this chunk and hand out windows of millions of
@@ -310,7 +315,7 @@ public final class FurnaceDeferralGameTests {
         }
 
         private void restore() {
-            CompatibilityCoordinator.setDeferringFurnaces(false);
+            CompatibilityCoordinator.setDeferringFurnaces(deferralBefore);
             ChunkClock.setStampOffset(chunk, 0L);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
             ChunkCatchUp.forget(level);
