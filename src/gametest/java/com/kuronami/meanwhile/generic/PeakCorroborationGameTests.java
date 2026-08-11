@@ -28,9 +28,9 @@ import java.util.Map;
  * from 9400 to 200 says the counter turns over at 9401.
  *
  * <p>That is not a hypothetical shape. It was measured happening in a standing run, three times
- * in nine, always as {@code from=9400 to=200 rise=1} (G137). The furnace producing it was one
- * this suite's own {@code inflated-ceiling} negative control had deliberately broken and left
- * standing in its arena, which a later chunk sweep then ticked for thousands of ticks.
+ * in nine, always as {@code from=9400 to=200 rise=1} (G137). What produced it was a furnace one
+ * of this suite's own negative controls had carried past its transition and left standing in its
+ * arena, which later chunk sweeps then ticked for thousands of ticks until its fuel ran out.
  *
  * <p>Everything below builds that furnace on purpose, so the reading is deterministic rather
  * than three-in-nine, and asks what the table does with it. Vanilla only, so this is registered
@@ -46,37 +46,38 @@ public final class PeakCorroborationGameTests {
     private static final String COOK_TIME = "minecraft:furnace|CookTime";
 
     /**
-     * Where the furnace's counter starts, which is where the {@code inflated-ceiling} negative
-     * control leaves it: past {@code CookTimeTotal}, so the {@code ==} boundary is behind it and
-     * the counter has nowhere to turn over. Taken from the standing baseline's
-     * {@code [furnace] STATE mode=inflated-ceiling} line.
+     * Where the furnace's counter starts: past {@code CookTimeTotal}, so the {@code ==} boundary
+     * is behind it and the counter has nowhere left to turn over. How far past does not matter,
+     * and it is set close to where the fall is watched so that the arena is cheap — a test that
+     * spends tens of thousands of ticks in one server tick is a load the rest of the suite has
+     * to survive.
      */
-    private static final int RUNAWAY_FROM = 2805;
+    private static final int RUNAWAY_FROM = 9000;
     private static final int COOK_TOTAL = 200;
     /**
      * Burn ticks given to the runaway furnace. The counter rises once per tick while the fire is
      * lit and the fire lasts {@code BURN - 1} ticks, so it reaches
      * {@code RUNAWAY_FROM + BURN - 1 = 9400} and is then clamped onto {@code COOK_TOTAL}.
      */
-    private static final int BURN = 6596;
+    private static final int BURN = 401;
     /** What the collapse is read as: the last value seen plus the step it was rising by. */
     private static final long BOGUS_PEAK = 9401L;
-    /** Ticks of the learning window. One more than the fall, so the fall is inside it. */
+    /** Ticks of the learning window. Longer than the fall, so the fall is inside it. */
     private static final int LEARN_WINDOW = BURN + 4;
 
     /**
      * The second window, long enough that a jump aimed at {@link #BOGUS_PEAK} is not cut short
-     * by anything else.
+     * by the window running out.
      */
-    private static final int SECOND_WINDOW = 7000;
+    private static final int SECOND_WINDOW = 600;
     /** Burn ticks in the second window: enough that {@code BurnTime} never bounds the span. */
-    private static final int SECOND_BURN = 20000;
+    private static final int SECOND_BURN = 2000;
     /**
      * How far a jump aimed at {@link #BOGUS_PEAK} travels from the second window's first tick.
-     * {@code 9401 - 2806 - 2}: the counter stands at 2806 after that tick, and two ticks of the
+     * {@code 9401 - 9001 - 2}: the counter stands at 9001 after that tick, and two ticks of the
      * regime are always held back — one for the boundary, one to check the jump by.
      */
-    private static final int SPAN_FROM_BOGUS_PEAK = 6593;
+    private static final int SPAN_FROM_BOGUS_PEAK = 398;
 
     private PeakCorroborationGameTests() {
     }
