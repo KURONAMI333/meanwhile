@@ -75,6 +75,32 @@ public class HarnessGameTests {
 
     private static final BlockPos CROP = new BlockPos(4, 2, 4);
 
+    /**
+     * Ticks the light engine is given to darken the buried crop in {@link #darkCropDoesNotGrow},
+     * and the one place that says why the figure is what it is.
+     *
+     * <p>A precondition, not a measurement. The test goes on to assert that a dark crop does not
+     * advance, and asserts nothing about how long the darkness took to arrive. A cell that never
+     * goes dark still fails the test, hard, and says how long it waited.
+     *
+     * <p><b>Why it is this large.</b> The same reason {@link UnloadWatch#ALLOWANCE_TICKS} is:
+     * what is being waited for is bounded by real time on background executors, not by ticks,
+     * and {@code GameTestServer} overrides {@code waitUntilNextTick} with {@code runAllTasks} and
+     * never sleeps, so this runner turns roughly 3,850 ticks a second. The old ceiling of twenty
+     * consecutive polls was about 5ms of real time; two mailbox hops under forty arenas of chunk
+     * churn do not reliably complete inside that, which is why eleven runs in fourteen failed
+     * having never once seen the engine hold work (G139, {@code ucu_g137_final*.log}). This
+     * figure is roughly two seconds of real time on this runner.
+     *
+     * <p>Burnt only when the wait fails: the poll stops at the first dark reading, so a passing
+     * run costs what the propagation actually took and no more.
+     */
+    private static final int DARK_WAIT_TICKS = 8000;
+    /** Ticks between light polls. Coarse enough not to schedule thousands of runnables. */
+    private static final int DARK_POLL_EVERY = 10;
+    /** The framework's own timeout, behind the allowance so the allowance reports first. */
+    private static final int DARK_TIMEOUT_TICKS = DARK_WAIT_TICKS + 400;
+
     // ---- can a clean window be skipped? ----------------------------------------------
 
     /**
@@ -566,24 +592,27 @@ public class HarnessGameTests {
      * {@code ServerChunkCache.MainThreadExecutor#pollTask}, behind an early return taken
      * whenever {@code runDistanceManagerUpdates()} still has something to do. With forty
      * arenas loading chunks, that gate is closed for long stretches and the light work simply
-     * waits, so any fixed tick ceiling is measuring how busy the suite is rather than whether
-     * the shading works.
-     *
-     * <p>So the poll calls {@code tryScheduleUpdate()} itself, ungated: the same call the
+     * waits. So the poll calls {@code tryScheduleUpdate()} itself, ungated: the same call the
      * game makes, from the same thread, taking the light engine out of competition with chunk
-     * loading. What remains is a question about the engine's own state rather than the clock.
-     * It is given as long as it keeps reporting work, and judged once it has none — with a
-     * short run of consecutive idle polls required first, because {@code hasLightWork()} sees
-     * only the last of the three stages a block change passes through. The tick ceiling is a
-     * backstop for an engine that never goes quiet, and the GameTest timeout sits behind that.
+     * loading.
      *
-     * <p>The judgement itself is unconditional: the first poll at which the cell is dark runs
-     * the assertion. A lit cell stays lit, so waiting longer cannot turn a failure into a
-     * pass. The tick the darkness arrived at is logged, so the margin is measured rather than
-     * assumed.
+     * <p><b>{@code hasLightWork()} cannot decide when to stop.</b> It reports the sky and block
+     * engine queues, which is the last of three stages: {@code checkBlock} posts the change to
+     * the priority sorter's mailbox, the sorter releases it to the light mailbox, and only then
+     * does it land where that method can see it. Both hops are on background executors. So
+     * {@code false} reads identically whether the propagation has finished or has not been
+     * scheduled yet, and idle runs of nineteen polls occur in the middle of a propagation that
+     * is genuinely in flight (G139, {@code ucu_g137_final06.log}). It is printed as a
+     * diagnostic and nothing turns on it.
+     *
+     * <p>What stops the wait is the precondition itself: the first poll at which the cell is
+     * dark runs the assertion. A lit cell stays lit, so waiting longer can never turn a failure
+     * into a pass. The only bound is the allowance below, and a wait that runs out fails the
+     * test, hard, saying how long it waited in both units and how often the engine was ever
+     * seen holding work — which separates "never enqueued" from "started and stalled".
      */
     @PrefixGameTestTemplate(false)
-    @GameTest(template = "empty9x5x9", timeoutTicks = 500)
+    @GameTest(template = "empty9x5x9", timeoutTicks = DARK_TIMEOUT_TICKS)
     public static void darkCropDoesNotGrow(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         CropBlock wheat = (CropBlock) Blocks.WHEAT;
@@ -599,25 +628,13 @@ public class HarnessGameTests {
 
         // Local rather than fields, so the unfreezing of this one method leaves the rest of
         // the class byte-identical.
-        final long pollEvery = 1L;
-        final long pollUntil = 400L;
+        final long pollEvery = DARK_POLL_EVERY;
+        final long pollUntil = DARK_WAIT_TICKS;
 
-        /**
-         * How many consecutive idle polls mean the light update has landed rather than not yet
-         * been picked up.
-         *
-         * <p>Not a latency budget. {@code hasLightWork()} is not overridden by
-         * {@link ThreadedLevelLightEngine}, so it reports the sky and block engine queues only
-         * — the last of three stages. A block change is handed to the task sorter first
-         * (ThreadedLevelLightEngine#addTask), reaches {@code lightTasks} second, and lands in
-         * the queue this reads third, so there is a window at the start where the engine is
-         * idle and the work is real. This covers that window, and it does not grow with how
-         * busy the suite is, which is what the old ceiling did.
-         */
-        final int quietRun = 20;
-
+        long startedNanos = System.nanoTime();
         boolean[] settled = {false};
-        int[] quiet = {0};
+        int[] busySightings = {0};
+        int[] polls = {0};
         for (long delay = pollEvery; delay <= pollUntil; delay += pollEvery) {
             boolean last = delay + pollEvery > pollUntil;
             long at = delay;
@@ -627,37 +644,40 @@ public class HarnessGameTests {
                 }
                 ThreadedLevelLightEngine lightEngine = level.getChunkSource().getLightEngine();
                 boolean busy = lightEngine.hasLightWork();
+                if (busy) {
+                    busySightings[0]++;
+                }
+                polls[0]++;
                 // Take the light engine out of competition with chunk loading. The server only
                 // reaches this call when the distance manager has nothing left to do
                 // (ServerChunkCache.MainThreadExecutor#pollTask: runDistanceManagerUpdates()
                 // returning true short-circuits before it), so while forty arenas are churning
-                // chunks the light work is never scheduled at all — which is what made the wait
-                // a function of suite load. This is the same call, from the same thread,
-                // ungated.
+                // chunks the light work is never scheduled at all. This is the same call, from
+                // the same thread, ungated.
                 lightEngine.tryScheduleUpdate();
 
                 BlockPos pos = helper.absolutePos(CROP);
                 int brightness = level.getRawBrightness(pos, 0);
-                Meanwhile.LOGGER.info("[dark] poll t={} brightness={} busy={} idle={}",
-                        at, brightness, busy, quiet[0]);
+                long waitedMs = (System.nanoTime() - startedNanos) / 1_000_000L;
+                Meanwhile.LOGGER.info("[dark] poll t={} waitedMs={} brightness={} busy={}"
+                        + " busySeen={}", at, waitedMs, brightness, busy, busySightings[0]);
                 if (brightness >= 9) {
-                    quiet[0] = busy ? 0 : quiet[0] + 1;
-                    // The engine's own state decides, not the clock: it is given as long as it
-                    // keeps having work, and judged as soon as it stops. The tick ceiling below
-                    // is only a backstop for an engine that never goes quiet at all, and the
-                    // GameTest timeout sits behind that.
-                    if (quiet[0] >= quietRun || last) {
+                    // Nothing here reads busy. Only running out of the allowance ends the wait.
+                    if (last) {
                         settled[0] = true;
-                        helper.fail("the crop never went dark (brightness " + brightness
-                                + " after " + at + " ticks, light engine busy=" + busy
-                                + ", idle for " + quiet[0] + " consecutive polls"
-                                + "), so the dark path was never exercised");
+                        helper.fail("the crop never went dark: brightness " + brightness
+                                + " after " + at + " ticks (" + waitedMs + "ms, " + polls[0]
+                                + " polls), and the light engine was seen holding work "
+                                + busySightings[0] + " times — zero means the update was never"
+                                + " scheduled at all, rather than scheduled and stalled. The"
+                                + " dark path was never exercised");
                     }
                     return;
                 }
                 settled[0] = true;
-                Meanwhile.LOGGER.info("[dark] went dark at tick {} of {} | brightness={}",
-                        at, pollUntil, brightness);
+                Meanwhile.LOGGER.info("[dark] went dark at tick {} of {} | waitedMs={}"
+                                + " brightness={} polls={} busySeen={}",
+                        at, pollUntil, waitedMs, brightness, polls[0], busySightings[0]);
 
                 BlockState fresh = wheat.getStateForAge(0);
                 int age = CropCatchUp.catchUpAge(level, pos, fresh, wheat, 1_000_000,
