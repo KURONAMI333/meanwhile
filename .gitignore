@@ -53,3 +53,4 @@ GAP_LOG.md
 harness_*.txt
 *_v2.txt
 *_jstack.txt
+*_gate_summary.txt
