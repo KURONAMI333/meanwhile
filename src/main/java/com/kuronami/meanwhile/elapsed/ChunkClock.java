@@ -337,17 +337,17 @@ public final class ChunkClock {
     }
 
     /** Whoever is handed a chunk that came back behind. Null puts the clock back to measuring. */
-    public static void setReconciler(@Nullable Reconciler next) {
+    static void setReconciler(@Nullable Reconciler next) {
         reconciler = next;
     }
 
     /** Whoever works off what the reconciler wrote down, once per level tick. */
-    public static void setDrainer(@Nullable Drainer next) {
+    static void setDrainer(@Nullable Drainer next) {
         drainer = next;
     }
 
     /** Whoever keeps a record per chunk and needs telling when the chunk goes. */
-    public static void setForgetter(@Nullable Forgetter next) {
+    static void setForgetter(@Nullable Forgetter next) {
         forgetter = next;
     }
 

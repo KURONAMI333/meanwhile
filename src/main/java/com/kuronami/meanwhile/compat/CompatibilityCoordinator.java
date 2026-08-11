@@ -105,7 +105,7 @@ public final class CompatibilityCoordinator {
      * classes (GAP_LOG G133 lists the other ten); it is public for the same reason they are, and
      * it should be closed with them rather than on its own.
      */
-    public static void setDeferringFurnaces(boolean defer) {
+    static void setDeferringFurnaces(boolean defer) {
         deferFurnaces.set(defer);
     }
 }

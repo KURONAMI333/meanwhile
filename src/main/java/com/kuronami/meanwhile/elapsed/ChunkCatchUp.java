@@ -1194,7 +1194,7 @@ public final class ChunkCatchUp {
         return mode;
     }
 
-    public static void setObserver(@Nullable Observer next) {
+    static void setObserver(@Nullable Observer next) {
         observer = next;
     }
 
@@ -1222,7 +1222,7 @@ public final class ChunkCatchUp {
         return skippedBelowThreshold;
     }
 
-    public static void resetCounters() {
+    static void resetCounters() {
         minDispatchedTicks = Integer.MAX_VALUE;
         dispatches = 0;
         refusedOutsideSweep = 0;
@@ -1383,7 +1383,7 @@ public final class ChunkCatchUp {
      * ticking a level tick will do before it stops. Both go back to the product values with
      * {@link #restoreBudget()}.
      */
-    public static void setBudget(int slice, int realTicks) {
+    static void setBudget(int slice, int realTicks) {
         sliceTicks = slice;
         budgetRealTicks = realTicks;
         // The time budget is put out of the way as well, so that a caller saying "I am setting
@@ -1405,7 +1405,7 @@ public final class ChunkCatchUp {
      * quantity: with a clock that advances a fixed amount per reading, "the walk stopped when it
      * ran out of time" is a claim about how many machines were carried, and it holds on any host.
      */
-    public static void setBudgetNanos(long nanos, LongSupplier clock) {
+    static void setBudgetNanos(long nanos, LongSupplier clock) {
         budgetNanos = nanos;
         nanoClock = clock;
         Meanwhile.LOGGER.info("[catchup] budget | nanos={} clock={}", nanos,
@@ -1413,7 +1413,7 @@ public final class ChunkCatchUp {
     }
 
     /** Test-only. See {@link #carryDebtAcrossReload}. */
-    public static void setCarryDebtAcrossReload(boolean carry) {
+    static void setCarryDebtAcrossReload(boolean carry) {
         carryDebtAcrossReload = carry;
         Meanwhile.LOGGER.info("[catchup] carry debt across reload | {}", carry);
     }
