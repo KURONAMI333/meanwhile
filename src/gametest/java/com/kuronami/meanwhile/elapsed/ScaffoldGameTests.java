@@ -160,7 +160,13 @@ public final class ScaffoldGameTests {
             // before it may jump one, and a warm table would make the second arm a different
             // measurement.
             GenericCatchUp.forgetPeaks();
-            ChunkCatchUp.forget(level);
+            // No ChunkCatchUp.forget here. It empties the global worklist, so an arm built while
+            // another gate still had jobs queued destroyed that work -- measured at 3 queued and
+            // 3 pending in 2 of 5 runs on unchanged code (GAP_LOG G157). Nothing was lost by
+            // dropping it: what this arm reads is paid/dispatches as a delta from the two
+            // snapshots taken immediately below, so another chunk's leftover debt cannot enter
+            // the measurement. restore() still clears up after the test, where the queue is
+            // this gate's own and empty.
             ChunkCatchUp.setObserver(index == 0 ? new Silent() : null);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(pos)
                     .withFixedWindow(WINDOW));
