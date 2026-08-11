@@ -238,6 +238,17 @@ public final class ChunkCatchUp {
         void afterSweep(ServerLevel level, LevelChunk chunk, Sweep sweep);
     }
 
+    /**
+     * The last settled sweep per chunk, per dimension, for a test to read back.
+     *
+     * <p>Dropped when the chunk goes, which is what keeps it bounded by what is loaded rather than
+     * by how much of the world has ever been visited. Nothing used to clear it, and a {@link Sweep}
+     * carries an {@link Attempt} per block entity — with an {@link Observer} installed, two
+     * serialised tags each (GAP_LOG G139). The eviction arrives through
+     * {@link ChunkClock.Forgetter} rather than a chunk event of this class's own, because the
+     * unload path is the one place a chunk may not be touched at all (G58) and routing it through
+     * the clock keeps that rule in one place.
+     */
     private static final Map<ResourceKey<Level>, Map<Long, Sweep>> SWEPT = new ConcurrentHashMap<>();
 
     private static volatile Mode mode = Mode.PRODUCT;
@@ -340,6 +351,20 @@ public final class ChunkCatchUp {
         installed = true;
         ChunkClock.setReconciler(ChunkCatchUp::onReconciled);
         ChunkClock.setDrainer(ChunkCatchUp::drain);
+        ChunkClock.setForgetter(new ChunkClock.Forgetter() {
+            @Override
+            public void forgetChunk(ResourceKey<Level> dimension, long chunkPos) {
+                Map<Long, Sweep> perLevel = SWEPT.get(dimension);
+                if (perLevel != null) {
+                    perLevel.remove(chunkPos);
+                }
+            }
+
+            @Override
+            public void forgetLevel(ResourceKey<Level> dimension) {
+                SWEPT.remove(dimension);
+            }
+        });
         Meanwhile.LOGGER.info("[catchup] installed | mode={} threshold={} ticks",
                 mode.label(), mode.threshold());
     }

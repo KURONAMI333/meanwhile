@@ -100,6 +100,23 @@ public final class ChunkClock {
         void drain(ServerLevel level);
     }
 
+    /**
+     * Told when a chunk or a level has gone, so that whatever is keyed on it can be dropped with
+     * it.
+     *
+     * <p>Handed the position and nothing else. The chunk is between {@code setLoaded(false)} and
+     * its save and must not be asked for its contents; a {@code getBlockEntity} here pulls it back
+     * to FULL and re-posts {@code Load} (GAP_LOG G58). Separate from {@link Reconciler} because
+     * this is the one moment {@link ChunkCatchUp} may not be handed a chunk at all, which is why
+     * that class registers no chunk event of its own.
+     */
+    public interface Forgetter {
+
+        void forgetChunk(ResourceKey<Level> dimension, long chunkPos);
+
+        void forgetLevel(ResourceKey<Level> dimension);
+    }
+
     /** The last reconcile per chunk, per level. */
     private static final Map<ResourceKey<Level>, Map<Long, Reconciliation>> RECONCILED =
             new ConcurrentHashMap<>();
@@ -123,6 +140,9 @@ public final class ChunkClock {
 
     @Nullable
     private static volatile Drainer drainer;
+
+    @Nullable
+    private static volatile Forgetter forgetter;
 
     /**
      * Whether control is currently inside the level sweep.
@@ -258,6 +278,10 @@ public final class ChunkClock {
         if (reconciled != null) {
             reconciled.remove(key);
         }
+        Forgetter sink = forgetter;
+        if (sink != null) {
+            sink.forgetChunk(level.dimension(), key);
+        }
 
         if (gone != null && gone.lastStamp != Long.MIN_VALUE) {
             Map<Long, Long> stamps = STAMP_AT_UNLOAD.computeIfAbsent(
@@ -273,6 +297,10 @@ public final class ChunkClock {
             TRACKED.remove(level.dimension());
             RECONCILED.remove(level.dimension());
             STAMP_AT_UNLOAD.remove(level.dimension());
+            Forgetter sink = forgetter;
+            if (sink != null) {
+                sink.forgetLevel(level.dimension());
+            }
         }
     }
 
@@ -316,6 +344,11 @@ public final class ChunkClock {
     /** Whoever works off what the reconciler wrote down, once per level tick. */
     public static void setDrainer(@Nullable Drainer next) {
         drainer = next;
+    }
+
+    /** Whoever keeps a record per chunk and needs telling when the chunk goes. */
+    public static void setForgetter(@Nullable Forgetter next) {
+        forgetter = next;
     }
 
     /** Whether the sweep is what is currently running. */
