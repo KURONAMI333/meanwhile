@@ -101,30 +101,36 @@ public final class PeakCorroborationGameTests {
             ServerLevel level = helper.getLevel();
             BlockPos pos = helper.absolutePos(FURNACE);
 
-            String blocked = learnTheBogusPeak(helper, level, pos);
-            if (blocked != null) {
-                helper.fail(blocked);
-                return;
-            }
+            try {
+                String blocked = learnTheBogusPeak(helper, level, pos);
+                if (blocked != null) {
+                    helper.fail(blocked);
+                    return;
+                }
 
-            Map<Long, Integer> seen = GenericCatchUp.observations().get(COOK_TIME);
-            Long authorising = GenericCatchUp.peaks().get(COOK_TIME);
-            Meanwhile.LOGGER.info("[peaks] LEARN | observations={} authorises={}",
-                    seen, authorising);
+                Map<Long, Integer> seen = GenericCatchUp.observations().get(COOK_TIME);
+                Long authorising = GenericCatchUp.peaks().get(COOK_TIME);
+                Meanwhile.LOGGER.info("[peaks] LEARN | observations={} authorises={}",
+                        seen, authorising);
 
-            if (seen == null || !Integer.valueOf(1).equals(seen.get(BOGUS_PEAK))) {
-                helper.fail("the runaway collapse was not read as a turnover at " + BOGUS_PEAK
-                        + ", so this test is no longer measuring the thing it was written for:"
-                        + " observations=" + seen);
-                return;
+                if (seen == null || !Integer.valueOf(1).equals(seen.get(BOGUS_PEAK))) {
+                    helper.fail("the runaway collapse was not read as a turnover at " + BOGUS_PEAK
+                            + ", so this test is no longer measuring the thing it was written for:"
+                            + " observations=" + seen);
+                    return;
+                }
+                if (authorising != null) {
+                    helper.fail("one sighting of " + BOGUS_PEAK + " is authorising a jump at "
+                            + authorising + ", which is the hole this closes");
+                    return;
+                }
+                helper.succeed();
+            } finally {
+                // Always, including every failure path. What this test builds is precisely the
+                // machine that teaches a bogus peak, and leaving one standing in the arena is
+                // the defect it exists to describe.
+                clear(level, pos);
             }
-            if (authorising != null) {
-                helper.fail("one sighting of " + BOGUS_PEAK + " is authorising a jump at "
-                        + authorising + ", which is the hole this closes");
-                return;
-            }
-            clear(level, pos);
-            helper.succeed();
         }).thenSucceed();
     }
 
@@ -140,38 +146,41 @@ public final class PeakCorroborationGameTests {
             ServerLevel level = helper.getLevel();
             BlockPos pos = helper.absolutePos(FURNACE);
 
-            String blocked = learnTheBogusPeak(helper, level, pos);
-            if (blocked != null) {
-                helper.fail(blocked);
-                return;
-            }
+            try {
+                String blocked = learnTheBogusPeak(helper, level, pos);
+                if (blocked != null) {
+                    helper.fail(blocked);
+                    return;
+                }
 
-            GenericCatchUp.Result result = secondWindow(helper, level, pos);
-            Meanwhile.LOGGER.info("[peaks] GUARDED | {} | cookTime={} observations={}",
-                    result, cookTime(level, pos), GenericCatchUp.observations().get(COOK_TIME));
+                GenericCatchUp.Result result = secondWindow(helper, level, pos);
+                Meanwhile.LOGGER.info("[peaks] GUARDED | {} | cookTime={} observations={}",
+                        result, cookTime(level, pos), GenericCatchUp.observations().get(COOK_TIME));
 
-            if (result.declined()) {
-                helper.fail("the catch-up declined, so nothing was measured: "
-                        + result.declineReason());
-                return;
+                if (result.declined()) {
+                    helper.fail("the catch-up declined, so nothing was measured: "
+                            + result.declineReason());
+                    return;
+                }
+                if (result.jumps() != 0) {
+                    helper.fail("a jump was authorised by a single sighting of " + BOGUS_PEAK + ": "
+                            + result);
+                    return;
+                }
+                if (result.realTicks() != SECOND_WINDOW) {
+                    helper.fail("the window was not run in full: realTicks=" + result.realTicks()
+                            + " of " + SECOND_WINDOW);
+                    return;
+                }
+                if (!result.refusals().containsKey("peak-not-seen")) {
+                    helper.fail("the window was run in full for some other reason than the counter"
+                            + " having nothing established to aim at: " + result.refusals());
+                    return;
+                }
+                helper.succeed();
+            } finally {
+                clear(level, pos);
             }
-            if (result.jumps() != 0) {
-                helper.fail("a jump was authorised by a single sighting of " + BOGUS_PEAK + ": "
-                        + result);
-                return;
-            }
-            if (result.realTicks() != SECOND_WINDOW) {
-                helper.fail("the window was not run in full: realTicks=" + result.realTicks()
-                        + " of " + SECOND_WINDOW);
-                return;
-            }
-            if (!result.refusals().containsKey("peak-not-seen")) {
-                helper.fail("the window was run in full for some other reason than the counter"
-                        + " having nothing established to aim at: " + result.refusals());
-                return;
-            }
-            clear(level, pos);
-            helper.succeed();
         }).thenSucceed();
     }
 
@@ -180,7 +189,7 @@ public final class PeakCorroborationGameTests {
      * away. A jump has to happen, and it has to be {@link #BOGUS_PEAK} that sets how far it goes.
      *
      * <p>Asserting the distance rather than merely {@code jumps > 0} is what makes this a control
-     * of this rule and not of jumping in general: {@code 6593} is arithmetic on 9401 and nothing
+     * of this rule and not of jumping in general: {@code 398} is arithmetic on 9401 and nothing
      * else in the arena produces it.
      */
     @PrefixGameTestTemplate(false)
@@ -193,38 +202,42 @@ public final class PeakCorroborationGameTests {
 
             GenericCatchUp.Result result;
             String blocked;
-            // Global, and every other test in this run shares it. Both the flip and the restore
-            // are inside this one body, which runs inside a single server tick, so no other
-            // test can be between them.
-            GenericCatchUp.setPeakCorroboration(false);
             try {
-                blocked = learnTheBogusPeak(helper, level, pos);
-                result = blocked == null ? secondWindow(helper, level, pos) : null;
+                // Global, and every other test in this run shares it. Both the flip and the restore
+                // are inside this one body, which runs inside a single server tick, so no other
+                // test can be between them.
+                GenericCatchUp.setPeakCorroboration(false);
+                try {
+                    blocked = learnTheBogusPeak(helper, level, pos);
+                    result = blocked == null ? secondWindow(helper, level, pos) : null;
+                } finally {
+                    GenericCatchUp.setPeakCorroboration(true);
+                }
+
+                if (blocked != null) {
+                    helper.fail(blocked);
+                    return;
+                }
+                Meanwhile.LOGGER.info("[peaks] NEGATIVE CONTROL | {} | cookTime={}",
+                        result, cookTime(level, pos));
+
+                if (result.jumps() == 0) {
+                    helper.fail("with the corroboration requirement removed the single sighting of "
+                            + BOGUS_PEAK + " still authorised nothing, so the guarded arm is not"
+                            + " evidence of anything: " + result);
+                    return;
+                }
+                if (result.jumpedTicks() != SPAN_FROM_BOGUS_PEAK) {
+                    helper.fail("a jump happened but did not travel exactly the distance "
+                            + BOGUS_PEAK + " allows (" + SPAN_FROM_BOGUS_PEAK + "), so it was aimed"
+                            + " at something else and this does not control the rule under test: "
+                            + result);
+                    return;
+                }
+                helper.succeed();
             } finally {
-                GenericCatchUp.setPeakCorroboration(true);
+                clear(level, pos);
             }
-
-            if (blocked != null) {
-                helper.fail(blocked);
-                return;
-            }
-            Meanwhile.LOGGER.info("[peaks] NEGATIVE CONTROL | {} | cookTime={}",
-                    result, cookTime(level, pos));
-
-            if (result.jumps() == 0) {
-                helper.fail("with the corroboration requirement removed the single sighting of "
-                        + BOGUS_PEAK + " still authorised nothing, so the guarded arm is not"
-                        + " evidence of anything: " + result);
-                return;
-            }
-            if (result.jumpedTicks() < SPAN_FROM_BOGUS_PEAK) {
-                helper.fail("a jump happened but did not travel the distance " + BOGUS_PEAK
-                        + " allows (" + SPAN_FROM_BOGUS_PEAK + "), so it was aimed at something"
-                        + " else and this does not control the rule under test: " + result);
-                return;
-            }
-            clear(level, pos);
-            helper.succeed();
         }).thenSucceed();
     }
 
