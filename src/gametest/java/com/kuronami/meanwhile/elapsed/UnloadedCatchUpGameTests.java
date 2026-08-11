@@ -798,7 +798,7 @@ public final class UnloadedCatchUpGameTests {
                     // Watched through the ledger rather than the outstanding balance: the sweep
                     // and the drain both run inside one level tick, so a debt settled in a single
                     // payment is never observable as a non-zero balance from out here.
-                    if (ChunkCatchUp.owedFor(target) > 0) {
+                    if (ChunkCatchUp.owedFor(level, target) > 0) {
                         payingSince = now;
                         step = Step.PAYING;
                         return;
@@ -809,7 +809,7 @@ public final class UnloadedCatchUpGameTests {
                     }
                 }
                 case PAYING -> {
-                    if (ChunkCatchUp.paidFor(target) < ChunkCatchUp.owedFor(target)) {
+                    if (ChunkCatchUp.paidFor(level, target) < ChunkCatchUp.owedFor(level, target)) {
                         if (now - payingSince > 2000) {
                             fail("phase " + phase + ": still owing "
                                     + ChunkCatchUp.debtFor(level, target) + " after 2000 ticks");
@@ -820,9 +820,9 @@ public final class UnloadedCatchUpGameTests {
                     worstTicks[phase] = ChunkCatchUp.worstDrainTicks();
                     drainsUsed[phase] = ChunkCatchUp.drains();
                     ticksToPay[phase] = now - payingSince + 1;
-                    instalments[phase] = ChunkCatchUp.slicesFor(target);
-                    owed[phase] = ChunkCatchUp.owedFor(target);
-                    paid[phase] = ChunkCatchUp.paidFor(target);
+                    instalments[phase] = ChunkCatchUp.slicesFor(level, target);
+                    owed[phase] = ChunkCatchUp.owedFor(level, target);
+                    paid[phase] = ChunkCatchUp.paidFor(level, target);
                     // One placeholder per value, checked against the argument list. The earlier
                     // form carried an extra argument and every field after it printed the wrong
                     // quantity under the right name.
@@ -1052,8 +1052,8 @@ public final class UnloadedCatchUpGameTests {
                     }
                     if (now - markAt > BACK_WAIT) {
                         fail("the chunk came back and never carried a balance; owed="
-                                + ChunkCatchUp.owedFor(target)
-                                + " paid=" + ChunkCatchUp.paidFor(target));
+                                + ChunkCatchUp.owedFor(level, target)
+                                + " paid=" + ChunkCatchUp.paidFor(level, target));
                     }
                 }
                 // Interruption 1: a save while the balance is outstanding.
@@ -1068,7 +1068,7 @@ public final class UnloadedCatchUpGameTests {
                 // Interruption 2: drop it entirely, with the balance still outstanding.
                 case PAYING_DROP -> {
                     debtBeforeDrop = ChunkCatchUp.debtFor(level, target);
-                    paidBeforeDrop = ChunkCatchUp.paidFor(target);
+                    paidBeforeDrop = ChunkCatchUp.paidFor(level, target);
                     if (debtBeforeDrop <= 0) {
                         fail("the balance was settled before it could be interrupted; raise the"
                                 + " gap or lower the slice");
@@ -1111,8 +1111,8 @@ public final class UnloadedCatchUpGameTests {
                         debtAfterReturn = ChunkCatchUp.debtFor(level, target);
                         Meanwhile.LOGGER.info("[interrupt] back | debtBeforeDrop={}"
                                         + " debtAfterReturn={} owed={} paid={}",
-                                debtBeforeDrop, debtAfterReturn, ChunkCatchUp.owedFor(target),
-                                ChunkCatchUp.paidFor(target));
+                                debtBeforeDrop, debtAfterReturn, ChunkCatchUp.owedFor(level, target),
+                                ChunkCatchUp.paidFor(level, target));
                         markAt = now;
                         step = Step.FINISHING;
                         return;
@@ -1123,14 +1123,14 @@ public final class UnloadedCatchUpGameTests {
                 }
                 case FINISHING -> {
                     if (ChunkCatchUp.debtFor(level, target) <= 0
-                            && ChunkCatchUp.paidFor(target) >= ChunkCatchUp.owedFor(target)) {
+                            && ChunkCatchUp.paidFor(level, target) >= ChunkCatchUp.owedFor(level, target)) {
                         step = Step.DONE;
                         return;
                     }
                     if (now - markAt > 4000) {
                         fail("the balance was still " + ChunkCatchUp.debtFor(level, target)
-                                + " after 4000 ticks; owed=" + ChunkCatchUp.owedFor(target)
-                                + " paid=" + ChunkCatchUp.paidFor(target));
+                                + " after 4000 ticks; owed=" + ChunkCatchUp.owedFor(level, target)
+                                + " paid=" + ChunkCatchUp.paidFor(level, target));
                     }
                 }
                 default -> {
@@ -1149,8 +1149,8 @@ public final class UnloadedCatchUpGameTests {
             for (ChunkPos chunk : arena) {
                 level.setChunkForced(chunk.x, chunk.z, true);
             }
-            long owed = ChunkCatchUp.owedFor(target);
-            long paid = ChunkCatchUp.paidFor(target);
+            long owed = ChunkCatchUp.owedFor(level, target);
+            long paid = ChunkCatchUp.paidFor(level, target);
             Meanwhile.LOGGER.info("[interrupt] RESULT | persistenceBroken={} debtAtSave={}"
                             + " debtAfterSave={} debtBeforeDrop={} paidBeforeDrop={}"
                             + " debtAfterReturn={} owed={} paid={} difference={}",
@@ -1293,8 +1293,8 @@ public final class UnloadedCatchUpGameTests {
                     step = Step.BACK;
                 }
                 case BACK -> {
-                    long owed = ChunkCatchUp.owedFor(target);
-                    long paid = ChunkCatchUp.paidFor(target);
+                    long owed = ChunkCatchUp.owedFor(level, target);
+                    long paid = ChunkCatchUp.paidFor(level, target);
                     if (owed >= (long) (trip + 1) * PER_TRIP && paid >= owed
                             && ChunkCatchUp.debtFor(level, target) <= 0) {
                         perTrip.add("trip" + trip + ":owed=" + owed + ",paid=" + paid);
@@ -1326,8 +1326,8 @@ public final class UnloadedCatchUpGameTests {
             for (ChunkPos chunk : arena) {
                 level.setChunkForced(chunk.x, chunk.z, true);
             }
-            long owed = ChunkCatchUp.owedFor(target);
-            long paid = ChunkCatchUp.paidFor(target);
+            long owed = ChunkCatchUp.owedFor(level, target);
+            long paid = ChunkCatchUp.paidFor(level, target);
             Meanwhile.LOGGER.info("[repeat] RESULT | trips={}/{} perTrip={} totalOwed={}"
                             + " totalPaid={} expected={} difference={}",
                     trip, TRIPS, PER_TRIP, owed, paid, (long) TRIPS * PER_TRIP, owed - paid);

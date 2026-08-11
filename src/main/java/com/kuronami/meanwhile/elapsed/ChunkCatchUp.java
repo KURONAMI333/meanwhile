@@ -259,8 +259,16 @@ public final class ChunkCatchUp {
 
     /** Chunks with something outstanding, oldest first. Appended to, never inserted into. */
     private static final Deque<Job> WORKLIST = new ArrayDeque<>();
-    /** One entry per absence being worked off. */
-    private static final Map<Long, Pending> PENDING = new HashMap<>();
+    /**
+     * One entry per absence being worked off, keyed by the chunk <em>and its dimension</em>.
+     *
+     * <p>The packed chunk position alone is not a key. Overworld (5,5) and Nether (5,5) pack to
+     * the same long, and with one entry between them the second dimension to fall behind found
+     * the first one's entry already queued, added its window to that one, and never queued a job
+     * of its own — so its chunk kept a balance nothing was going to pay (GAP_LOG G139).
+     * {@link Job} is that pair and is used as the key throughout.
+     */
+    private static final Map<Job, Pending> PENDING = new HashMap<>();
 
     /**
      * Ticks of debt one chunk may be given in one level tick.
@@ -307,10 +315,10 @@ public final class ChunkCatchUp {
     private static volatile boolean drainFailureReported;
 
     /** Cumulative, per chunk, so that paying the same absence twice can be asserted against. */
-    private static final Map<Long, Long> owedTotal = new ConcurrentHashMap<>();
-    private static final Map<Long, Long> paidTotal = new ConcurrentHashMap<>();
+    private static final Map<Job, Long> owedTotal = new ConcurrentHashMap<>();
+    private static final Map<Job, Long> paidTotal = new ConcurrentHashMap<>();
     /** Instalments the last settled absence took, per chunk. */
-    private static final Map<Long, Integer> slicesUsed = new ConcurrentHashMap<>();
+    private static final Map<Job, Integer> slicesUsed = new ConcurrentHashMap<>();
 
     private static volatile long drainNanos;
     private static volatile long worstDrainNanos;
@@ -389,14 +397,15 @@ public final class ChunkCatchUp {
         long carried = carryDebtAcrossReload ? debtOf(chunk) : 0L;
         long total = carried + owed;
         setDebt(chunk, total);
-        owedTotal.merge(key, owed, Long::sum);
+        Job job = new Job(level.dimension(), key);
+        owedTotal.merge(job, owed, Long::sum);
 
-        Pending pending = PENDING.computeIfAbsent(key,
+        Pending pending = PENDING.computeIfAbsent(job,
                 ignored -> new Pending(key, lastSeen, at, level.dimension()));
         pending.owed += owed;
         if (!pending.queued) {
             pending.queued = true;
-            WORKLIST.addLast(new Job(level.dimension(), key));
+            WORKLIST.addLast(job);
         }
         Meanwhile.LOGGER.info("[catchup] owed | chunk={} dim={} lastSeen={} at={} elapsed={}"
                         + " added={} carried={} debt={} mode={} queue={}",
@@ -473,7 +482,7 @@ public final class ChunkCatchUp {
                     // not coming back. Drop the half-finished bookkeeping so the next
                     // reconciliation builds a fresh one; what the chunk is owed rides on the
                     // chunk itself and is untouched by this.
-                    PENDING.remove(job.chunkPos());
+                    PENDING.remove(job);
                     if (!drainFailureReported) {
                         drainFailureReported = true;
                         Meanwhile.LOGGER.warn("[catchup] drain failed | chunk={} dim={} | {} |"
@@ -510,7 +519,7 @@ public final class ChunkCatchUp {
             WORKLIST.addLast(job);
             return 0;
         }
-        Pending pending = PENDING.get(job.chunkPos());
+        Pending pending = PENDING.get(job);
         if (pending == null) {
             return 0;
         }
@@ -548,7 +557,7 @@ public final class ChunkCatchUp {
                         current.spend());
         pending.absorb(sliceResult);
         pending.slices++;
-        paidTotal.merge(job.chunkPos(), (long) Math.max(slice, 0), Long::sum);
+        paidTotal.merge(job, (long) Math.max(slice, 0), Long::sum);
 
         long left = remaining <= 0 ? 0L : remaining - slice;
         setDebt(chunk, left);
@@ -558,8 +567,8 @@ public final class ChunkCatchUp {
         }
 
         pending.queued = false;
-        PENDING.remove(job.chunkPos());
-        slicesUsed.put(job.chunkPos(), pending.slices);
+        PENDING.remove(job);
+        slicesUsed.put(job, pending.slices);
         Sweep whole = pending.toSweep();
         SWEPT.computeIfAbsent(level.dimension(), ignored -> new ConcurrentHashMap<>())
                 .put(job.chunkPos(), whole);
@@ -930,8 +939,11 @@ public final class ChunkCatchUp {
      * keep being paid off during whatever runs next.
      */
     public static void forget(ServerLevel level) {
-        for (Long key : new ArrayList<>(owedTotal.keySet())) {
-            ChunkPos pos = new ChunkPos(key);
+        for (Job job : new ArrayList<>(owedTotal.keySet())) {
+            if (!job.dimension().equals(level.dimension())) {
+                continue;
+            }
+            ChunkPos pos = new ChunkPos(job.chunkPos());
             LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
             if (chunk != null) {
                 setDebt(chunk, 0L);
@@ -943,8 +955,8 @@ public final class ChunkCatchUp {
     }
 
     /** How many instalments the last settled absence on this chunk took. */
-    public static int slicesFor(ChunkPos pos) {
-        return slicesUsed.getOrDefault(pos.toLong(), 0);
+    public static int slicesFor(ServerLevel level, ChunkPos pos) {
+        return slicesUsed.getOrDefault(new Job(level.dimension(), pos.toLong()), 0);
     }
 
     /**
@@ -986,13 +998,13 @@ public final class ChunkCatchUp {
     }
 
     /** What this chunk has been told it is owed, over the whole run. */
-    public static long owedFor(ChunkPos pos) {
-        return owedTotal.getOrDefault(pos.toLong(), 0L);
+    public static long owedFor(ServerLevel level, ChunkPos pos) {
+        return owedTotal.getOrDefault(new Job(level.dimension(), pos.toLong()), 0L);
     }
 
     /** What has actually been handed over for it, over the whole run. */
-    public static long paidFor(ChunkPos pos) {
-        return paidTotal.getOrDefault(pos.toLong(), 0L);
+    public static long paidFor(ServerLevel level, ChunkPos pos) {
+        return paidTotal.getOrDefault(new Job(level.dimension(), pos.toLong()), 0L);
     }
 
     /** Ticks still outstanding on a loaded chunk, or 0. */

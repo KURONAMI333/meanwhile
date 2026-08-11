@@ -164,7 +164,7 @@ public final class ScaffoldGameTests {
             ChunkCatchUp.setObserver(index == 0 ? new Silent() : null);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(pos)
                     .withFixedWindow(WINDOW));
-            paidAtArmStart = ChunkCatchUp.paidFor(chunk);
+            paidAtArmStart = ChunkCatchUp.paidFor(level, chunk);
             dispatchesAtArmStart = ChunkCatchUp.dispatches();
             ChunkClock.setStampOffset(chunk, -STALE_BY);
             Meanwhile.LOGGER.info("[scaffold] armed | arm={} observer={} pos={} window={}"
@@ -187,7 +187,7 @@ public final class ScaffoldGameTests {
             }
             arms[index] = new Arm(index == 0 ? "observer installed" : "observer null", tag(),
                     String.valueOf(level.getBlockState(pos)),
-                    ChunkCatchUp.paidFor(chunk) - paidAtArmStart,
+                    ChunkCatchUp.paidFor(level, chunk) - paidAtArmStart,
                     ChunkCatchUp.dispatches() - dispatchesAtArmStart);
             Meanwhile.LOGGER.info("[scaffold] arm | {} | slices={} paid={} state={} tag={}",
                     arms[index].name(), arms[index].slices(), arms[index].paid(),
