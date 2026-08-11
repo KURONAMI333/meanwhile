@@ -23,9 +23,9 @@ echo "--- harness baseline diff lines: $(diff "ucu_${NAME}_harness.txt" ../_hand
 
 # The v2 observations. Which line kinds are in and which two fields are masked is written out
 # in the header of BASELINE_meanwhile_v2.txt; keep the two in step.
-grep -oE "\[(corpus|furnace|furnacewide|debt|scaffold|guard|duel)\] .*" "$LOG" \
+grep -oE "\[(corpus|furnace|furnacewide|debt|scaffold|guard|duel|peaks)\] .*" "$LOG" \
   | sed 's/\r$//' \
-  | grep -E "^\[(corpus|furnace|furnacewide)\] |^\[debt\] RESULT |^\[scaffold\] (GATE|RESULT|arm) |^\[guard\] threshold |^\[duel\] WIDE shape " \
+  | grep -E "^\[(corpus|furnace|furnacewide|peaks)\] |^\[debt\] RESULT |^\[scaffold\] (GATE|RESULT|arm) |^\[guard\] threshold |^\[duel\] WIDE shape " \
   | sed -e 's/\$\$Lambda\/0x[0-9a-f]*/$$Lambda\/<jvm>/g' -e 's/worstDrain=[0-9]*us/worstDrain=<us>/g' \
   | LC_ALL=C sort -u > "ucu_${NAME}_v2.txt"
 EXPECTED="$(mktemp)"
