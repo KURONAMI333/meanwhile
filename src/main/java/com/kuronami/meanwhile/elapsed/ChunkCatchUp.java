@@ -359,6 +359,15 @@ public final class ChunkCatchUp {
      */
     private static volatile int worstDrainRealTicks;
     private static volatile int drains;
+    /**
+     * How many times an instalment ran out of budget in the middle of a chunk and was carried on
+     * by a later level tick.
+     *
+     * <p>Counted rather than inferred. Whether the walk stops inside a chunk is the whole of what
+     * the mid-chunk stop is for, and a suite in which it never happens is a suite that does not
+     * exercise it — which is not the same thing as one in which it happens and changes nothing.
+     */
+    private static volatile int partialPayments;
 
     private ChunkCatchUp() {
     }
@@ -633,6 +642,16 @@ public final class ChunkCatchUp {
             // assertion in this file that would otherwise be silent and severe — into a test of
             // how many level ticks the instalment happened to be spread over.
             pending.paidUpTo = portion.stoppedAfter();
+            if (partialPayments++ == 0) {
+                // Once per run. That the walk stops inside a chunk at all is the thing the
+                // mid-chunk stop exists to do, and "it never happened" and "it happened and
+                // changed nothing" are different readings of the same silent log.
+                Meanwhile.LOGGER.info("[catchup] part payment | chunk={} dim={} stoppedAfter={}"
+                                + " carried={} | slice={} allowance={}",
+                        pos, level.dimension().location(),
+                        BlockPos.of(portion.stoppedAfter()),
+                        sliceResult.attempted(), slice, allowance);
+            }
             WORKLIST.addLast(job);
             return sliceResult.realTicks();
         }
@@ -1066,6 +1085,7 @@ public final class ChunkCatchUp {
         worstDrainNanos = 0L;
         worstDrainRealTicks = 0;
         drains = 0;
+        partialPayments = 0;
         owedTotal.clear();
         paidTotal.clear();
         slicesUsed.clear();
@@ -1138,6 +1158,11 @@ public final class ChunkCatchUp {
 
     public static int drains() {
         return drains;
+    }
+
+    /** See {@link #partialPayments}. */
+    public static int partialPayments() {
+        return partialPayments;
     }
 
     public static int queueLength() {
