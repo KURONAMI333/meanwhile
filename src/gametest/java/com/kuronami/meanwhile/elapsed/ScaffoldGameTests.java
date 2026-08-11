@@ -3,6 +3,7 @@ package com.kuronami.meanwhile.elapsed;
 import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
 import java.util.List;
+import java.util.function.LongSupplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.gametest.framework.GameTest;
@@ -45,14 +46,55 @@ import org.jetbrains.annotations.Nullable;
  * arming and the last slice out of the comparison, so a difference between the arms can only be
  * the catch-up.
  *
+ * <h3>Why the instalment count is a figure this file decides</h3>
+ * <p>Every number this gate writes down is read <b>per chunk</b> and over a window and an
+ * instalment this test sets: {@code slices = ceil(WINDOW / SLICE)}, numerator from
+ * {@link ChunkCatchUp.Mode#withFixedWindow}, denominator from {@link ChunkCatchUp#setBudget}.
+ * Nothing in that expression names the worklist, so the value cannot move because another gate
+ * left something queued.
+ *
+ * <p>It used to. The count came off {@link ChunkCatchUp#dispatches()}, which every job in the run
+ * bumps, and it read 3 only because this gate emptied the global worklist before each arm — which
+ * is the cross-gate corruption {@link ChunkCatchUp#forget} now refuses (GAP_LOG G156, G158). Stop
+ * emptying it and the same line reads 3, 18 or 6 by the run while every assertion stays green.
+ * A frozen observation whose value is a property of how crowded the queue was is the class of
+ * quantity ruling 6 kept out of required assertions, and it does not belong in a baseline either.
+ *
  * <p>No {@code @GameTestHolder}: registered from {@link Meanwhile}, like the other vanilla gates.
  */
 public final class ScaffoldGameTests {
 
     private static final BlockPos SUBJECT = new BlockPos(3, 1, 3);
 
-    /** Three slices of {@code ChunkCatchUp.SLICE_TICKS}, and several smelts. */
-    private static final int WINDOW = 3000;
+    /**
+     * The instalment this test pays its window off in, set here rather than inherited.
+     *
+     * <p>{@code sliceTicks} is global mutable state — {@link ChunkCatchUp#setBudget} writes it and
+     * several gates do — so a test that reads an instalment count without setting the divisor is
+     * reading whatever the gate before it left behind. This is the product's own value, so the
+     * figure is the product's; what setting it buys is that the figure is a function of this
+     * file rather than of the suite's order.
+     */
+    private static final int SLICE = ChunkCatchUp.SLICE_TICKS;
+
+    /** Three slices of {@link #SLICE}, and several smelts. */
+    private static final int WINDOW = 3 * SLICE;
+
+    /** Ticks the fake clock adds per reading. See {@link #FAKE_BUDGET}. */
+    private static final long CLOCK_STEP = 250_000L;
+
+    /**
+     * The time budget the drain is measured against while this gate runs, in the units of the
+     * fake clock rather than of the host.
+     *
+     * <p>The same shape {@code CrowdedChunkGameTests} uses, and for the same reason: how much a
+     * level tick gets through must not be a property of how fast this machine is. Sixteen steps
+     * rather than four, because unlike that gate this one is not measuring the stopping point —
+     * it needs its own chunk reached every level tick even when the suite's standing backlog is
+     * ahead of it in the queue, and under {@link ChunkCatchUp.Mode#restrictedTo} a backlog job
+     * walks no block entities and costs one clock reading.
+     */
+    private static final long FAKE_BUDGET = CLOCK_STEP * 16L;
 
     /** Enough to be behind at all; the window itself is fixed rather than taken from this. */
     private static final int STALE_BY = 100;
@@ -96,7 +138,6 @@ public final class ScaffoldGameTests {
         private int countdown = SETTLE;
         private int index;
         private long paidAtArmStart;
-        private int dispatchesAtArmStart;
         private int waited;
         @Nullable
         private String failure;
@@ -160,12 +201,16 @@ public final class ScaffoldGameTests {
             // before it may jump one, and a warm table would make the second arm a different
             // measurement.
             GenericCatchUp.forgetPeaks();
-            ChunkCatchUp.forget(level);
             ChunkCatchUp.setObserver(index == 0 ? new Silent() : null);
+            // Both axes of the drain pinned to this test's own configuration: the instalment by
+            // setBudget, the level tick's stopping point by a clock this test drives. setBudget
+            // puts the time budget out of the way for callers driving the work axis, so the
+            // order matters and is the one CrowdedChunkGameTests uses.
+            ChunkCatchUp.setBudget(SLICE, ChunkCatchUp.BUDGET_REAL_TICKS);
+            ChunkCatchUp.setBudgetNanos(FAKE_BUDGET, new SteppingClock());
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(pos)
                     .withFixedWindow(WINDOW));
             paidAtArmStart = ChunkCatchUp.paidFor(level, chunk);
-            dispatchesAtArmStart = ChunkCatchUp.dispatches();
             ChunkClock.setStampOffset(chunk, -STALE_BY);
             Meanwhile.LOGGER.info("[scaffold] armed | arm={} observer={} pos={} window={}"
                             + " startTag={}",
@@ -179,16 +224,23 @@ public final class ScaffoldGameTests {
                 step = Step.DONE;
                 return;
             }
-            if (ChunkCatchUp.dispatches() == dispatchesAtArmStart) {
+            // Both readings are of this chunk. ChunkCatchUp.dispatches() is a run-wide counter --
+            // every job in the worklist bumps it, whoever owns the chunk -- so a delta taken off
+            // it measures how crowded the suite's queue was during this window and not what this
+            // arm did. It stood in for "has this arm's own work started yet?" and for the
+            // instalment count, and it was wrong for both: with another gate's chunk in the
+            // queue it moves on the first level tick, which would let this loop record an arm
+            // that had been paid nothing (GAP_LOG G158).
+            long paid = ChunkCatchUp.paidFor(level, chunk) - paidAtArmStart;
+            if (paid < WINDOW) {
                 return;
             }
             if (ChunkCatchUp.debtFor(level, chunk) != 0L) {
                 return;
             }
             arms[index] = new Arm(index == 0 ? "observer installed" : "observer null", tag(),
-                    String.valueOf(level.getBlockState(pos)),
-                    ChunkCatchUp.paidFor(level, chunk) - paidAtArmStart,
-                    ChunkCatchUp.dispatches() - dispatchesAtArmStart);
+                    String.valueOf(level.getBlockState(pos)), paid,
+                    ChunkCatchUp.slicesFor(level, chunk));
             Meanwhile.LOGGER.info("[scaffold] arm | {} | slices={} paid={} state={} tag={}",
                     arms[index].name(), arms[index].slices(), arms[index].paid(),
                     arms[index].state(), arms[index].tag());
@@ -250,8 +302,22 @@ public final class ScaffoldGameTests {
             ChunkClock.setStampOffset(chunk, 0L);
             ChunkCatchUp.setObserver(null);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
+            ChunkCatchUp.restoreBudget();
             ChunkCatchUp.forget(level);
             helper.setBlock(SUBJECT, Blocks.AIR);
+        }
+    }
+
+    /** A clock that moves only when it is read, by a fixed amount. */
+    private static final class SteppingClock implements LongSupplier {
+
+        private long now;
+
+        @Override
+        public long getAsLong() {
+            long value = now;
+            now += CLOCK_STEP;
+            return value;
         }
     }
 
