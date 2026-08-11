@@ -53,6 +53,24 @@ public final class GenericCatchUpGameTests {
     private static final long SEED = 20260808L;
     private static final String BATCH = "generic";
 
+    /**
+     * Lines {@link DeepStateDigest} walks over the millstone arena, asserted rather than
+     * reported.
+     *
+     * <p>What the deep comparison claims is that it looks wider than the serialised surface. It
+     * cannot show that by itself: the only thing it judges is whether the lines that <em>differ</em>
+     * are field lines, so a digest that stopped descending into the block entity would produce
+     * fewer lines, find fewer differences, and pass. The count is the coverage, and it has to be
+     * able to fail.
+     *
+     * <p>Exact, not a floor. A floor catches a digest that shrinks, but not a millstone that
+     * loses a field while the arena gains a block — and netting out is precisely the silent
+     * narrowing this is here to stop. It is exact because it can be: 85 in every run recorded in
+     * this repository, against a pinned {@code create_version}, so a different number cannot
+     * arrive without somebody changing a dependency or this digest on purpose.
+     */
+    private static final int DEEP_LINES = 85;
+
     private GenericCatchUpGameTests() {
     }
 
@@ -292,6 +310,14 @@ public final class GenericCatchUpGameTests {
         subject.reset(helper);
         subject.simulate(helper, ticks, RandomSource.create(SEED));
         DeepStateDigest ticked = DeepStateDigest.capture(helper.getLevel(), region);
+        if (ticked.size() != DEEP_LINES) {
+            return new Outcome("the deep digest walked " + ticked.size() + " lines, not "
+                    + DEEP_LINES + ". Everything else here only asks whether the lines that"
+                    + " differ are field lines, so a digest that quietly stopped walking part of"
+                    + " the block entity would still pass. If this followed a Create bump or a"
+                    + " change to DeepStateDigest, read what it now covers and move the constant"
+                    + " deliberately.", "", List.of());
+        }
 
         String vacuous = subject.postcondition(helper);
         if (vacuous != null) {
