@@ -412,6 +412,33 @@ public final class ChunkCatchUp {
      * did is a property of the budget.
      */
     private static volatile int worstDrainRealTicks;
+    /**
+     * Diagnostic: inside the worst drain, how much of it one single machine cost.
+     *
+     * <p>What separates two readings of the same spike. If one machine accounts for most of the
+     * drain, the spike is the overshoot — the walk cannot stop inside a machine, so a machine that
+     * runs its whole slice for real is spent whatever the budget says. If instead the ticks are
+     * spread over the machines walked, the spike is the aggregate per-tick cost and the budget is
+     * what bounds it. The two have different fixes and the counters that existed could not tell
+     * them apart.
+     */
+    private static volatile int worstDrainOneMachine;
+    /** Machines walked in the worst drain, next to {@link #worstDrainOneMachine}. */
+    private static volatile int worstDrainMachines;
+    /** Which drain of the run the worst one was, counted from one. */
+    private static volatile int worstDrainIndex;
+    /** Why the costliest machine in the worst drain did not jump. */
+    private static volatile String worstDrainWhy = "";
+    /** Where it was. */
+    private static volatile long worstDrainWherePos;
+
+    // Accumulated while one drain runs. Not volatile: a drain is on the server thread and the
+    // re-entrancy guard makes it the only one.
+    private static int drainMachines;
+    private static int drainOneMachine;
+    private static String drainOneMachineWhy = "";
+    private static long drainOneMachinePos;
+
     private static volatile int drains;
     /**
      * How many times an instalment ran out of budget in the middle of a chunk and was carried on
@@ -568,6 +595,10 @@ public final class ChunkCatchUp {
         }
         draining = true;
         long startedAt = nanoClock.getAsLong();
+        drainMachines = 0;
+        drainOneMachine = 0;
+        drainOneMachineWhy = "";
+        drainOneMachinePos = 0L;
         int spentRealTicks = 0;
         int jobsTaken = 0;
         int jobsThisTick = WORKLIST.size();
@@ -620,6 +651,16 @@ public final class ChunkCatchUp {
         }
         if (spentRealTicks > worstDrainRealTicks) {
             worstDrainRealTicks = spentRealTicks;
+            worstDrainOneMachine = drainOneMachine;
+            worstDrainMachines = drainMachines;
+            worstDrainIndex = drains;
+            worstDrainWhy = drainOneMachineWhy;
+            worstDrainWherePos = drainOneMachinePos;
+            Meanwhile.LOGGER.info("[catchup] worst drain | dim={} drain={} realTicks={}"
+                            + " machines={} oneMachine={} at={} why={}",
+                    level.dimension().location(), drains, spentRealTicks, drainMachines,
+                    drainOneMachine, BlockPos.of(drainOneMachinePos).toShortString(),
+                    drainOneMachineWhy);
         }
         if (jobsTaken > 0) {
             Meanwhile.LOGGER.debug("[catchup] drain | dim={} jobs={} realTicks={} budget={}"
@@ -954,6 +995,14 @@ public final class ChunkCatchUp {
                         0, 0, 0, "{}", "{}", before, before);
             }
             attempts.add(attempt);
+            drainMachines++;
+            if (attempt.realTicks() > drainOneMachine) {
+                // References only, no string built: this runs once per machine per slice and the
+                // line that reads it is printed at most once per new worst drain.
+                drainOneMachine = attempt.realTicks();
+                drainOneMachineWhy = attempt.refusals();
+                drainOneMachinePos = pos.asLong();
+            }
 
             if (attempt.declined()) {
                 declined++;
@@ -1145,6 +1194,11 @@ public final class ChunkCatchUp {
         drainNanos = 0L;
         worstDrainNanos = 0L;
         worstDrainRealTicks = 0;
+        worstDrainOneMachine = 0;
+        worstDrainMachines = 0;
+        worstDrainIndex = 0;
+        worstDrainWhy = "";
+        worstDrainWherePos = 0L;
         drains = 0;
         partialPayments = 0;
         owedTotal.clear();
@@ -1211,6 +1265,26 @@ public final class ChunkCatchUp {
      */
     public static int worstDrainTicks() {
         return worstDrainRealTicks;
+    }
+
+    /** See {@link #worstDrainOneMachine}. */
+    public static int worstDrainOneMachine() {
+        return worstDrainOneMachine;
+    }
+
+    /** See {@link #worstDrainMachines}. */
+    public static int worstDrainMachines() {
+        return worstDrainMachines;
+    }
+
+    /** See {@link #worstDrainIndex}. */
+    public static int worstDrainIndex() {
+        return worstDrainIndex;
+    }
+
+    /** See {@link #worstDrainWhy}. */
+    public static String worstDrainWhy() {
+        return worstDrainWhy;
     }
 
     public static long totalDrainMicros() {

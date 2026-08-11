@@ -261,9 +261,12 @@ public final class CrowdedChunkGameTests {
                     worstMicros[phase] = ChunkCatchUp.worstDrainMicros();
                     partials[phase] = ChunkCatchUp.partialPayments();
                     Meanwhile.LOGGER.info("[crowd] phase {} | clock={} intended={} placed={}"
-                                    + " offered={} worstDrainTicks={} partPayments={}",
+                                    + " offered={} worstDrainTicks={} partPayments={}"
+                                    + " | worst drain: index={} machines={} oneMachine={} why={}",
                             phase, phase == 0 ? "real" : "stepping", INTENDED, placed,
-                            offered[phase], worstTicks[phase], partials[phase]);
+                            offered[phase], worstTicks[phase], partials[phase],
+                            ChunkCatchUp.worstDrainIndex(), ChunkCatchUp.worstDrainMachines(),
+                            ChunkCatchUp.worstDrainOneMachine(), ChunkCatchUp.worstDrainWhy());
                     if (++phase >= 2) {
                         step = Step.DONE;
                         return;
