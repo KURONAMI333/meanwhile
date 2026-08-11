@@ -521,7 +521,9 @@ public final class ChunkCatchUp {
                 // anything a future call site forgets. One chunk failing must not take the rest
                 // of the queue, and none of it may reach LevelTickEvent.Post.
                 try {
-                    spentRealTicks += pay(level, job);
+                    // What is left of this level tick's budget, so that the chunk walk can stop
+                    // inside the chunk instead of only between chunks.
+                    spentRealTicks += pay(level, job, budgetRealTicks - spentRealTicks);
                 } catch (Throwable thrown) {
                     drainFailures++;
                     // The job was taken off the queue and the slice it was in the middle of is
@@ -559,8 +561,14 @@ public final class ChunkCatchUp {
         }
     }
 
-    /** One slice for one chunk. Returns the real ticker invocations it cost. */
-    private static int pay(ServerLevel level, Job job) {
+    /**
+     * As much of one chunk's instalment as {@code allowance} pays for. Returns the real ticker
+     * invocations it cost.
+     *
+     * <p>May stop in the middle of the chunk and be called again on a later level tick, which is
+     * what keeps the worst single tick off (machines in the chunk) x (the slice).
+     */
+    private static int pay(ServerLevel level, Job job, int allowance) {
         if (!job.dimension().equals(level.dimension())) {
             WORKLIST.addLast(job);
             return 0;
@@ -588,20 +596,49 @@ public final class ChunkCatchUp {
         }
 
         long remaining = debtOf(chunk);
-        // A non-positive figure only gets here with the sign guard deliberately off, and then the
-        // whole point is what reaches GenericCatchUp, so it is passed through unchanged.
-        int slice = remaining <= 0
-                ? (int) Math.max(Integer.MIN_VALUE, remaining)
-                : (int) Math.min(remaining, sliceTicks);
-        minDispatchedTicks = Math.min(minDispatchedTicks, slice);
-        dispatches++;
+        int slice;
+        if (pending.instalmentSlice != 0) {
+            // Halfway through one. The window was fixed when it started and the balance it is
+            // against has not been written down yet, so both are read rather than recomputed.
+            slice = pending.instalmentSlice;
+        } else {
+            // A non-positive figure only gets here with the sign guard deliberately off, and then
+            // the whole point is what reaches GenericCatchUp, so it is passed through unchanged.
+            slice = remaining <= 0
+                    ? (int) Math.max(Integer.MIN_VALUE, remaining)
+                    : (int) Math.min(remaining, sliceTicks);
+            pending.instalmentSlice = slice;
+            // Counted where the instalment is decided, not where it is worked on, so that a
+            // chunk carried over several level ticks is still one dispatch of one window.
+            minDispatchedTicks = Math.min(minDispatchedTicks, slice);
+            dispatches++;
+        }
 
         Mode current = mode;
-        Sweep sliceResult = current.spend() == Spend.TICK_INTERLEAVED
-                ? spendInterleaved(level, chunk, pending.lastSeen, pending.at, pending.owed, slice)
+        Portion portion = current.spend() == Spend.TICK_INTERLEAVED
+                // The control is never resumed part-way. "Every machine one tick, then every
+                // machine the next" is what it is comparing against, and a control stopped in
+                // the middle of a round is no longer that.
+                ? new Portion(spendInterleaved(level, chunk, pending.lastSeen, pending.at,
+                        pending.owed, slice), Long.MIN_VALUE, true)
                 : spend(level, chunk, pending.lastSeen, pending.at, pending.owed, slice,
-                        current.spend());
+                        current.spend(), pending.paidUpTo, allowance);
+        Sweep sliceResult = portion.sweep();
         pending.absorb(sliceResult);
+
+        if (!portion.complete()) {
+            // Nothing is written down for a part payment. The balance, the instalment count and
+            // the ledger all move exactly once per instalment, at the end of it; crediting them
+            // here would count one payment as many and turn "was anything paid twice?" — the one
+            // assertion in this file that would otherwise be silent and severe — into a test of
+            // how many level ticks the instalment happened to be spread over.
+            pending.paidUpTo = portion.stoppedAfter();
+            WORKLIST.addLast(job);
+            return sliceResult.realTicks();
+        }
+
+        pending.paidUpTo = Long.MIN_VALUE;
+        pending.instalmentSlice = 0;
         pending.slices++;
         if (recordRunningTotals) {
             paidTotal.merge(job, (long) Math.max(slice, 0), Long::sum);
@@ -671,6 +708,26 @@ public final class ChunkCatchUp {
         private int slices;
         private boolean queued;
         private boolean announced;
+        /**
+         * How far into the chunk the instalment in flight has got, as the packed position of the
+         * last block entity it carried. {@link Long#MIN_VALUE} when no instalment is in flight.
+         *
+         * <p>A packed position rather than an index into the walk. The walk is rebuilt from the
+         * chunk's own map every time and a catch-up is allowed to add or remove a block entity,
+         * so an index means something different on the next pass; a position that the walk is
+         * sorted by does not move when its neighbours do. A machine placed behind the mark during
+         * an instalment is simply not carried by that instalment and waits for the next one.
+         */
+        private long paidUpTo = Long.MIN_VALUE;
+        /**
+         * The window this instalment is carrying every machine by, frozen when it starts.
+         *
+         * <p>Zero when none is in flight. Frozen because the instalment is one payment of the
+         * debt however many level ticks it is spread over: recomputing it against the outstanding
+         * balance halfway would carry the second half of the chunk by a different amount than the
+         * first, and the balance is only written down when the whole chunk has been carried.
+         */
+        private int instalmentSlice;
 
         private Pending(long chunkPos, long lastSeen, long at, ResourceKey<Level> dimension) {
             this.chunkPos = chunkPos;
@@ -729,8 +786,9 @@ public final class ChunkCatchUp {
      * order; the map's iteration order is not promised to be stable and a comparison made against
      * a different order is a comparison of a different machine.
      */
-    private static Sweep spend(ServerLevel level, LevelChunk chunk, long lastSeen, long at,
-                               long elapsed, int dispatched, Spend how) {
+    private static Portion spend(ServerLevel level, LevelChunk chunk, long lastSeen, long at,
+                                 long elapsed, int dispatched, Spend how, long resumeAfter,
+                                 int allowance) {
         HolderLookup.Provider registries = level.registryAccess();
         List<BlockPos> positions = positionsOf(chunk);
 
@@ -739,6 +797,8 @@ public final class ChunkCatchUp {
         int declined = 0;
         int realTicks = 0;
         int jumpedTicks = 0;
+        long stoppedAfter = resumeAfter;
+        boolean complete = true;
 
         // Everything below that is not the catch-up itself exists to be compared against, and a
         // comparison is something a measurement installs. Serialising every block entity twice
@@ -749,11 +809,26 @@ public final class ChunkCatchUp {
         boolean recording = observer != null;
 
         for (BlockPos pos : positions) {
+            if (pos.asLong() <= resumeAfter) {
+                // Carried already by an earlier level tick of this same instalment.
+                continue;
+            }
+            // Checked before the machine rather than after it, so that what the budget bounds is
+            // the work this level tick is about to start rather than the work it has finished.
+            // One machine is always carried, whatever the allowance: a drain that can decline to
+            // do anything is a drain that never finishes, and the chunk it stalled on is the one
+            // the player is standing in. The overshoot that buys is one machine's slice, which is
+            // the quantum the budget cannot see inside of (GAP_LOG G151).
+            if (!attempts.isEmpty() && realTicks >= allowance) {
+                complete = false;
+                break;
+            }
             BlockEntity blockEntity = chunk.getBlockEntities().get(pos);
             if (blockEntity == null) {
                 // Removed by an earlier catch-up in this same sweep.
                 continue;
             }
+            stoppedAfter = pos.asLong();
             CompoundTag before = recording ? blockEntity.saveWithoutMetadata(registries) : null;
             String block = recording
                     ? BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock()).toString()
@@ -809,8 +884,19 @@ public final class ChunkCatchUp {
             jumpedTicks += attempt.jumpedTicks();
         }
 
-        return new Sweep(chunk.getPos().toLong(), lastSeen, at, elapsed, dispatched,
-                attempts.size(), jumped, declined, realTicks, jumpedTicks, attempts);
+        return new Portion(new Sweep(chunk.getPos().toLong(), lastSeen, at, elapsed, dispatched,
+                attempts.size(), jumped, declined, realTicks, jumpedTicks, attempts),
+                stoppedAfter, complete);
+    }
+
+    /**
+     * One level tick's worth of an instalment: what it carried, how far it got, and whether that
+     * was the whole chunk.
+     *
+     * <p>{@code stoppedAfter} is only meaningful when {@code complete} is false, and is the packed
+     * position the next level tick resumes after.
+     */
+    private record Portion(Sweep sweep, long stoppedAfter, boolean complete) {
     }
 
     /**
