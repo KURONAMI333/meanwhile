@@ -2,6 +2,7 @@ package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
+import com.kuronami.meanwhile.generic.GenericTestAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.gametest.framework.GameTest;
@@ -177,7 +178,7 @@ public final class FurnaceSpanGameTests {
                     // Caught up, from the same place, knowing nothing about this type yet: the
                     // first furnace in a world has to watch its counter turn over before it can
                     // jump over one.
-                    GenericCatchUp.forgetPeaks();
+                    GenericTestAccess.forgetPeaks();
                     restore(level, pos, start, startState, registries);
                     GenericCatchUp.Result result = GenericCatchUp.catchUp(level, pos, GAP, mode);
                     CompoundTag caught = level.getBlockEntity(pos)

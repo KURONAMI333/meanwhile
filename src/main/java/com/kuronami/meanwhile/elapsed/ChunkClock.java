@@ -367,7 +367,7 @@ public final class ChunkClock {
      * {@link #setStampOffset} this reproduces the same arrival with the chunk's contents intact.
      * Nothing in the product calls it.
      */
-    public static void rearm(ServerLevel level, ChunkPos pos) {
+    static void rearm(ServerLevel level, ChunkPos pos) {
         Map<Long, Tracked> tracked = TRACKED.get(level.dimension());
         Tracked chunk = tracked == null ? null : tracked.get(pos.toLong());
         if (chunk == null) {
@@ -384,7 +384,7 @@ public final class ChunkClock {
      * Test-only: write a wrong time onto one chunk, to produce the stored-time-in-the-future case
      * a crash leaves behind. An offset of zero puts it back.
      */
-    public static void setStampOffset(ChunkPos pos, long offset) {
+    static void setStampOffset(ChunkPos pos, long offset) {
         stampOffsetChunk = offset == 0L ? Long.MIN_VALUE : pos.toLong();
         stampOffset = offset;
         Meanwhile.LOGGER.info("[clock] stamp offset | chunk={} offset={}", pos, offset);

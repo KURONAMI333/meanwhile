@@ -190,8 +190,8 @@ public final class DimensionKeyGameTests {
             if (ChunkCatchUp.workInFlight()) {
                 return;
             }
-            ChunkCatchUp.forget(overworld);
-            ChunkCatchUp.forget(hell);
+            CatchUpTestAccess.forget(overworld);
+            CatchUpTestAccess.forget(hell);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(restrictTo));
             owedBeforeOverworld = ChunkCatchUp.owedFor(overworld, target);
             paidBeforeOverworld = ChunkCatchUp.paidFor(overworld, target);
@@ -315,9 +315,9 @@ public final class DimensionKeyGameTests {
             finished = true;
             ChunkClock.setStampOffset(target, 0L);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            ChunkCatchUp.forget(overworld);
+            CatchUpTestAccess.forget(overworld);
             if (nether != null) {
-                ChunkCatchUp.forget(nether);
+                CatchUpTestAccess.forget(nether);
                 nether.setChunkForced(target.x, target.z, false);
             }
             if (failure == null && windowNether < 0L) {

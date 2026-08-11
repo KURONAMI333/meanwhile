@@ -858,7 +858,7 @@ public final class UnloadedCatchUpGameTests {
             }
             ChunkCatchUp.restoreBudget();
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            ChunkCatchUp.forget(level);
+            CatchUpTestAccess.forget(level);
             RoundTripImages.stopWatching();
 
             for (int i = 0; i < slices.length; i++) {
@@ -1159,7 +1159,7 @@ public final class UnloadedCatchUpGameTests {
             ChunkCatchUp.restoreBudget();
             ChunkCatchUp.setCarryDebtAcrossReload(true);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            ChunkCatchUp.forget(level);
+            CatchUpTestAccess.forget(level);
             RoundTripImages.stopWatching();
 
             if (failure != null) {
@@ -1335,7 +1335,7 @@ public final class UnloadedCatchUpGameTests {
                 Meanwhile.LOGGER.info("[repeat] {}", line);
             }
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            ChunkCatchUp.forget(level);
+            CatchUpTestAccess.forget(level);
             RoundTripImages.stopWatching();
 
             if (failure != null) {
