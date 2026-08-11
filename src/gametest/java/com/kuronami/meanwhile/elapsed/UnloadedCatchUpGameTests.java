@@ -1382,15 +1382,28 @@ public final class UnloadedCatchUpGameTests {
      * "the game ticked it" is the thing measured rather than assumed. The chunk's own ticker
      * registry ({@code LevelChunk.tickersInLevel}) is read at each sample, so that a machine that
      * is not advancing can be told apart from one that is not registered to advance.
+     *
+     * <p>The window after the round trip starts when the machine is working again rather than
+     * when its chunk arrives, bounded by {@link #RESUME_WAIT}. Those are two different moments:
+     * the millstone takes tens of ticks to pick its recipe back up after a load, and starting a
+     * 100-tick window at the load spends most of it waiting for something the test is not
+     * asking about. The arm that never leaves is started where it always was, on the tick after
+     * its reset, because it has no such gap to wait out — measured at one tick against the 26 to
+     * 62 of a round trip (GAP_LOG G144). The two arms are compared as "did it move", never
+     * against each other as numbers, so the asymmetry costs the comparison nothing.
      */
     @PrefixGameTestTemplate(false)
+    // The window holds SETTLE 30 + NATURAL_WINDOW 100 + UNLOAD_WAIT 8000 + WAIT 300 +
+    // BACK_WAIT 200 + RESUME_WAIT 4000 + NATURAL_WINDOW 100 + 60 slack = 12790. thenExecuteFor
+    // burns its whole window on every run, green ones included, which is what every allowance
+    // inside it costs (UnloadWatch).
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID,
-            batch = "unloadedcatchup-natural", timeoutTicks = 11400)
+            batch = "unloadedcatchup-natural", timeoutTicks = 13800)
     public static void roundTripBlockEntityKeepsTickingNaturally(GameTestHelper helper) {
         RoundTripImages.install();
         Natural probe = new Natural(helper);
         helper.startSequence()
-                .thenExecuteFor(10400, probe::step)
+                .thenExecuteFor(12800, probe::step)
                 .thenExecute(probe::judge)
                 .thenSucceed();
     }
@@ -1398,10 +1411,34 @@ public final class UnloadedCatchUpGameTests {
     /** Real server ticks each half of the natural-ticking probe is watched for. */
     private static final int NATURAL_WINDOW = 100;
 
+    /**
+     * Ticks the machine is given to start working again after its chunk comes back, before the
+     * window above is started.
+     *
+     * <p>This is a precondition, not a measurement. What the probe asserts is that the machine
+     * advances once it is running, and {@link #NATURAL_WINDOW} is unchanged; this only decides
+     * when that window begins. A machine that never resumes still fails, hard, and says which
+     * wait it was — same treatment as {@link UnloadWatch}.
+     *
+     * <p><b>Why it is needed.</b> The window used to start on {@code ChunkEvent.Load}, and the
+     * millstone does not start grinding on the tick its chunk arrives: over 34 runs the resume
+     * landed between 26 and 62 ticks after the load, against a window of 100 (GAP_LOG G144).
+     * One run under CPU contention did not resume inside the window at all and the probe read
+     * that as "the game is no longer ticking it", while its own samples showed the chunk loaded,
+     * the ticker registered and the rotation already restored.
+     *
+     * <p><b>Why it is in ticks, and this big.</b> Same reasoning as {@link UnloadWatch}: every
+     * mechanism containing a GameTest is denominated in ticks, and {@code GameTestServer} never
+     * sleeps, so about 3,850 ticks pass a second and a wait of this size is roughly a second of
+     * real time — about sixty times the longest resume measured. The line the probe prints on
+     * resuming carries both units, so a drift in that conversion is visible rather than assumed.
+     */
+    private static final int RESUME_WAIT = 4000;
+
     private static final class Natural {
 
         private enum Step { PLACING, SETTLING, LOADED_RUN, RESET, RELEASED, GONE, BACK,
-            RETURNED_RUN, DONE }
+            RESUMING, RETURNED_RUN, DONE }
 
         private static final int WAIT = 300;
 
@@ -1419,6 +1456,9 @@ public final class UnloadedCatchUpGameTests {
         private long unloadAt = -1L;
         private long askedAt = -1L;
         private long backAt = -1L;
+        private long resumedAt = -1L;
+        private long backNanos;
+        private double groundAtBack;
         private int loadedStartTimer = Integer.MIN_VALUE;
         private int loadedEndTimer = Integer.MIN_VALUE;
         private double loadedStartGround;
@@ -1515,6 +1555,22 @@ public final class UnloadedCatchUpGameTests {
                 case BACK -> {
                     if (RoundTripImages.loads() > 0 && RoundTripImages.loadAt() >= askedAt) {
                         backAt = now;
+                        backNanos = System.nanoTime();
+                        groundAtBack = subject.observe(helper)[0];
+                        sample("returned/back");
+                        step = Step.RESUMING;
+                        return;
+                    }
+                    if (now - askedAt > BACK_WAIT) {
+                        fail("no ChunkEvent.Load in " + BACK_WAIT + " ticks after asking");
+                    }
+                }
+                case RESUMING -> {
+                    if (hasResumed()) {
+                        resumedAt = now;
+                        Meanwhile.LOGGER.info("[natural] resumed | afterTicks={} afterMs={}"
+                                        + " allowanceTicks={}", now - backAt,
+                                (System.nanoTime() - backNanos) / 1_000_000L, RESUME_WAIT);
                         returnedStartTimer = timerOf(level, pos);
                         returnedStartGround = subject.observe(helper)[0];
                         sample("returned/start");
@@ -1522,8 +1578,12 @@ public final class UnloadedCatchUpGameTests {
                         step = Step.RETURNED_RUN;
                         return;
                     }
-                    if (now - askedAt > BACK_WAIT) {
-                        fail("no ChunkEvent.Load in " + BACK_WAIT + " ticks after asking");
+                    if (now - backAt > RESUME_WAIT) {
+                        fail("the machine never started working again in " + RESUME_WAIT
+                                + " ticks (" + (System.nanoTime() - backNanos) / 1_000_000L
+                                + "ms) after its chunk came back, so the game is no longer"
+                                + " ticking it: timer=" + timerOf(level, pos) + " ground="
+                                + subject.observe(helper)[0] + " (was " + groundAtBack + ")");
                     }
                 }
                 case RETURNED_RUN -> {
@@ -1541,6 +1601,20 @@ public final class UnloadedCatchUpGameTests {
                 default -> {
                 }
             }
+        }
+
+        /**
+         * Whether the machine has started working again since its chunk came back.
+         *
+         * <p>Read off the same two figures the window is judged on, so that what is waited for
+         * and what is measured cannot drift apart. {@code timerOf} answers
+         * {@link Integer#MIN_VALUE} when there is no block entity at all, which is not a
+         * machine that has resumed.
+         */
+        private boolean hasResumed() {
+            int timer = timerOf(level, pos);
+            return (timer != Integer.MIN_VALUE && timer != 0)
+                    || subject.observe(helper)[0] != groundAtBack;
         }
 
         /** One reading of everything that could explain a machine standing still. */
@@ -1572,11 +1646,13 @@ public final class UnloadedCatchUpGameTests {
             int returnedDelta = returnedEndTimer - returnedStartTimer;
             Meanwhile.LOGGER.info("[natural] RESULT | window={} ticks || never-left: timer {}->{}"
                             + " delta={} ground {}->{} || after-round-trip: timer {}->{} delta={}"
-                            + " ground {}->{} || unloadAt={} loadAt={} backAt={}",
+                            + " ground {}->{} || unloadAt={} loadAt={} backAt={}"
+                            + " resumedAt={} resumeTicks={}",
                     NATURAL_WINDOW, loadedStartTimer, loadedEndTimer, loadedDelta,
                     loadedStartGround, loadedEndGround, returnedStartTimer, returnedEndTimer,
                     returnedDelta, returnedStartGround, returnedEndGround,
-                    unloadAt, RoundTripImages.loadAt(), backAt);
+                    unloadAt, RoundTripImages.loadAt(), backAt, resumedAt,
+                    resumedAt < 0 ? -1L : resumedAt - backAt);
 
             if (failure != null) {
                 helper.fail(failure);
