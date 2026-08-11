@@ -177,8 +177,6 @@ public final class FurnaceDeferralGameTests {
             // test's — measured, not supposed: the first run of this gate read a sweep of
             // `elapsed=120000` with no attempts in it (`ucu_g155_idle1.log`, chunk
             // [-147949, 383034]).
-            ChunkCatchUp.forget(level);
-
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(pos));
             dispatchesAtStart = ChunkCatchUp.dispatches();
             ChunkClock.setStampOffset(chunk, -GAP);
