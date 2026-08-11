@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongSupplier;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -297,8 +298,34 @@ public final class ChunkCatchUp {
      * reads as a machine spinning up rather than as a stall.
      */
     public static final int SLICE_TICKS = 1000;
-    /** Real ticker invocations after which a level tick stops paying anything more. */
+    /**
+     * Real ticker invocations after which a level tick stops paying anything more.
+     *
+     * <p>The backstop, not the primary budget. What one ticker invocation costs is not a
+     * constant — a millstone and a machine from a large tech mod both count one here and do not
+     * cost the same (the spread by type is in {@code _handoff/BENCH_create_tickcost.csv}) — so a
+     * budget denominated in invocations cannot bound what a level tick spends. {@link
+     * #BUDGET_NANOS} does that. This one stays for two reasons: it bounds the worst case in a
+     * unit that does not depend on how fast the host is, and it is what the deterministic half of
+     * the gates asserts on, since how much work fits in a given time is a property of the machine
+     * the test runs on (GAP_LOG G130 ruling 6, G151).
+     */
     public static final int BUDGET_REAL_TICKS = 400;
+    /**
+     * How long a level tick may spend paying off debt, in nanoseconds.
+     *
+     * <p>The primary budget, and a <em>fraction of the tick rather than a constant</em>. A server
+     * tick is 50ms; this is 2ms, or 4% of one. That form is what makes the default safe on a host
+     * this was not measured on: on a host half as fast, 2ms buys half as much work, so the catch-up
+     * takes twice as many level ticks to settle and the spike a player feels stays at 4% of a
+     * tick. A constant number of invocations would instead double the spike.
+     *
+     * <p>What it does not bound is the machine already in progress when the budget runs out. The
+     * walk stops on a machine boundary, so the overshoot is one machine carried by one {@link
+     * #SLICE_TICKS} window, and that is the term that does grow on a slower host. Measured on this
+     * host in GAP_LOG G151.
+     */
+    public static final long BUDGET_NANOS = 2_000_000L;
 
     private static volatile int sliceTicks = SLICE_TICKS;
     /**
@@ -308,6 +335,16 @@ public final class ChunkCatchUp {
      */
     private static volatile boolean carryDebtAcrossReload = true;
     private static volatile int budgetRealTicks = BUDGET_REAL_TICKS;
+    private static volatile long budgetNanos = BUDGET_NANOS;
+    /**
+     * Where the drain reads the time from.
+     *
+     * <p>{@link System#nanoTime} in the product. A test that wants to assert on the time budget
+     * installs one that advances a fixed amount per reading, which turns "the walk stopped when
+     * it ran out of time" into a counted, repeatable claim about how many machines were carried
+     * rather than a wall-clock inequality — the shape ruling 6 threw out (GAP_LOG G130, G151).
+     */
+    private static volatile LongSupplier nanoClock = System::nanoTime;
     private static boolean draining;
     /**
      * How many times a drain was asked for while one was already running and was turned away.
@@ -513,12 +550,17 @@ public final class ChunkCatchUp {
             return;
         }
         draining = true;
-        long startedAt = System.nanoTime();
+        long startedAt = nanoClock.getAsLong();
         int spentRealTicks = 0;
         int jobsTaken = 0;
         int jobsThisTick = WORKLIST.size();
         try {
-            while (jobsTaken < jobsThisTick && spentRealTicks < budgetRealTicks) {
+            // Elapsed rather than a precomputed deadline. An unbounded budget is expressed as
+            // Long.MAX_VALUE, and startedAt plus that overflows to a time already past, which
+            // stops the drain before it does anything -- measured as every debt gate reporting
+            // owed=0 (GAP_LOG G151). A difference of two readings cannot overflow that way.
+            while (jobsTaken < jobsThisTick && spentRealTicks < budgetRealTicks
+                    && nanoClock.getAsLong() - startedAt < budgetNanos) {
                 Job job = WORKLIST.pollFirst();
                 if (job == null) {
                     break;
@@ -532,7 +574,7 @@ public final class ChunkCatchUp {
                 try {
                     // What is left of this level tick's budget, so that the chunk walk can stop
                     // inside the chunk instead of only between chunks.
-                    spentRealTicks += pay(level, job, budgetRealTicks - spentRealTicks);
+                    spentRealTicks += pay(level, job, budgetRealTicks - spentRealTicks, startedAt);
                 } catch (Throwable thrown) {
                     drainFailures++;
                     // The job was taken off the queue and the slice it was in the middle of is
@@ -577,7 +619,7 @@ public final class ChunkCatchUp {
      * <p>May stop in the middle of the chunk and be called again on a later level tick, which is
      * what keeps the worst single tick off (machines in the chunk) x (the slice).
      */
-    private static int pay(ServerLevel level, Job job, int allowance) {
+    private static int pay(ServerLevel level, Job job, int allowance, long startedAt) {
         if (!job.dimension().equals(level.dimension())) {
             WORKLIST.addLast(job);
             return 0;
@@ -631,7 +673,7 @@ public final class ChunkCatchUp {
                 ? new Portion(spendInterleaved(level, chunk, pending.lastSeen, pending.at,
                         pending.owed, slice), Long.MIN_VALUE, true)
                 : spend(level, chunk, pending.lastSeen, pending.at, pending.owed, slice,
-                        current.spend(), pending.paidUpTo, allowance);
+                        current.spend(), pending.paidUpTo, allowance, startedAt);
         Sweep sliceResult = portion.sweep();
         pending.absorb(sliceResult);
 
@@ -807,7 +849,7 @@ public final class ChunkCatchUp {
      */
     private static Portion spend(ServerLevel level, LevelChunk chunk, long lastSeen, long at,
                                  long elapsed, int dispatched, Spend how, long resumeAfter,
-                                 int allowance) {
+                                 int allowance, long startedAt) {
         HolderLookup.Provider registries = level.registryAccess();
         List<BlockPos> positions = positionsOf(chunk);
 
@@ -838,7 +880,9 @@ public final class ChunkCatchUp {
             // do anything is a drain that never finishes, and the chunk it stalled on is the one
             // the player is standing in. The overshoot that buys is one machine's slice, which is
             // the quantum the budget cannot see inside of (GAP_LOG G151).
-            if (!attempts.isEmpty() && realTicks >= allowance) {
+            if (!attempts.isEmpty()
+                    && (realTicks >= allowance
+                            || nanoClock.getAsLong() - startedAt >= budgetNanos)) {
                 complete = false;
                 break;
             }
@@ -1213,7 +1257,30 @@ public final class ChunkCatchUp {
     public static void setBudget(int slice, int realTicks) {
         sliceTicks = slice;
         budgetRealTicks = realTicks;
-        Meanwhile.LOGGER.info("[catchup] budget | slice={} realTicks={}", slice, realTicks);
+        // The time budget is put out of the way as well, so that a caller saying "I am setting
+        // the work budget" gets a drain bounded by work alone. Without this, a test that varies
+        // the work axis and reads worstDrainTicks would silently be reading a number the host's
+        // speed had a hand in as soon as its arena grew a second machine — which is exactly the
+        // host dependence ruling 6 removed, coming back by a route nobody is watching. The
+        // survival of that gate is meant to be structural, not a property of one arena holding
+        // one millstone (GAP_LOG G151).
+        budgetNanos = Long.MAX_VALUE;
+        Meanwhile.LOGGER.info("[catchup] budget | slice={} realTicks={} nanos=unbounded",
+                slice, realTicks);
+    }
+
+    /**
+     * Test-only: how long a level tick may spend, and where it reads the time from.
+     *
+     * <p>The clock is injected rather than mocked away so that the assertion stays on a counted
+     * quantity: with a clock that advances a fixed amount per reading, "the walk stopped when it
+     * ran out of time" is a claim about how many machines were carried, and it holds on any host.
+     */
+    public static void setBudgetNanos(long nanos, LongSupplier clock) {
+        budgetNanos = nanos;
+        nanoClock = clock;
+        Meanwhile.LOGGER.info("[catchup] budget | nanos={} clock={}", nanos,
+                clock == null ? "null" : clock.getClass().getName());
     }
 
     /** Test-only. See {@link #carryDebtAcrossReload}. */
@@ -1224,6 +1291,7 @@ public final class ChunkCatchUp {
 
     public static void restoreBudget() {
         setBudget(SLICE_TICKS, BUDGET_REAL_TICKS);
+        setBudgetNanos(BUDGET_NANOS, System::nanoTime);
     }
 
     public static int sliceTicks() {

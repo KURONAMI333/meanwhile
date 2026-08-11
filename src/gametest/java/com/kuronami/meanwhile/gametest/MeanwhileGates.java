@@ -13,6 +13,7 @@ import com.kuronami.meanwhile.chunkprobe.ChunkRoundTripGameTests;
 import com.kuronami.meanwhile.elapsed.CatchUpGuardGameTests;
 import com.kuronami.meanwhile.elapsed.ChunkCatchUp;
 import com.kuronami.meanwhile.elapsed.CorpusSweepGameTests;
+import com.kuronami.meanwhile.elapsed.CrowdedChunkGameTests;
 import com.kuronami.meanwhile.elapsed.DimensionKeyGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceSpanGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceWideGameTests;
@@ -75,9 +76,11 @@ public class MeanwhileGates {
             event.register(ScaffoldGameTests.class);
             event.register(PeakCorroborationGameTests.class);
             event.register(DimensionKeyGameTests.class);
+            event.register(CrowdedChunkGameTests.class);
         });
         Meanwhile.LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
-                + " wide, corpus sweep, guard, scaffold, peak corroboration, dimension key");
+                + " wide, corpus sweep, guard, scaffold, peak corroboration, dimension key,"
+                + " crowded chunk");
 
         // The unloaded catch-up gate is measured against a Create machine, so it exists only
         // when Create does.
