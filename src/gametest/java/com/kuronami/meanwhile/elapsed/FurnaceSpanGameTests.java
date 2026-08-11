@@ -50,14 +50,16 @@ public final class FurnaceSpanGameTests {
      * Real ticks the furnace is given to light before anything is recorded.
      *
      * <p>Run through the block's own ticker inside the same callback that records the start tag,
-     * not by waiting that many server ticks. A furnace standing in the arena between two server
-     * ticks is a furnace anything else in the server may tick, and this arena sits in a chunk
-     * that owes tens of thousands of ticks — a GameTest world loads and unloads the same chunks
-     * all run, so by the time this batch runs the arena's chunk comes back owing a debt and the
-     * mod catches it up. That is the mod behaving correctly; what was wrong is scaffolding that
-     * called itself pristine while standing in that chunk. Nothing can interleave inside one
-     * callback, so the count of ticker calls before the snapshot is now five whatever else the
-     * server is doing.
+     * not by waiting that many server ticks. Waiting, about one loaded run in five recorded a
+     * start that had already smelted — thousands of ticks' worth, a different number each time.
+     * What ticked it was not established: the arena's chunk comes back owing tens of thousands
+     * of ticks, because a GameTest world loads and unloads the same chunks all run, but the
+     * catch-up's own accounting over that window is far short of the damage.
+     *
+     * <p>So the fix does not name a culprit. Nothing can interleave inside one callback, so the
+     * count of ticker calls before the snapshot is five whatever else the server is doing. Note
+     * what is <em>not</em> wrong here: catching up a chunk that comes back owing time is the mod
+     * working. The scaffolding calling itself pristine while standing in such a chunk is not.
      */
     private static final int SETTLE = 5;
 
