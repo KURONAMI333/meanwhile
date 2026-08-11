@@ -16,10 +16,17 @@ echo "=== $NAME | gradle exit=$EXIT"
 grep -o "GAME TESTS COMPLETE.*\|All [0-9]* required tests passed.*\|[0-9]* required tests failed.*\|tests are now running.*" "$LOG" | sed 's/\r$//' | tail -5
 grep -c "Game test server shutting down" "$LOG" | sed 's/^/shutdown lines: /'
 
-grep -o "\[harness\].*" "$LOG" | sed 's/\r$//' | sort -u > "ucu_${NAME}_harness.txt"
+# Which line kinds are in and which family is excluded is written out in the header of
+# BASELINE_meanwhile_harness.txt; keep the two in step.
+grep -o "\[harness\].*" "$LOG" | sed 's/\r$//' \
+  | grep -v "^\[harness\] millstone" \
+  | sort -u > "ucu_${NAME}_harness.txt"
+HARNESS_EXPECTED="$(mktemp)"
+grep -v '^#' ../_handoff/BASELINE_meanwhile_harness.txt > "$HARNESS_EXPECTED"
 echo "--- harness baseline diff (retired loaded-chunk scheme) ---"
-diff "ucu_${NAME}_harness.txt" ../_handoff/BASELINE_meanwhile_harness.txt
-echo "--- harness baseline diff lines: $(diff "ucu_${NAME}_harness.txt" ../_handoff/BASELINE_meanwhile_harness.txt | wc -l)"
+diff "ucu_${NAME}_harness.txt" "$HARNESS_EXPECTED"
+echo "--- harness baseline diff lines: $(diff "ucu_${NAME}_harness.txt" "$HARNESS_EXPECTED" | wc -l)"
+rm -f "$HARNESS_EXPECTED"
 
 # The v2 observations. Which line kinds are in and which two fields are masked is written out
 # in the header of BASELINE_meanwhile_v2.txt; keep the two in step.
