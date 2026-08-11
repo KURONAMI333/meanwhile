@@ -222,7 +222,7 @@ public final class ChunkClock {
                 .put(key, new Reconciliation(key, priorPresent, lastSeen, now, elapsed));
 
         if (priorPresent && elapsed >= THRESHOLD_TICKS) {
-            Meanwhile.LOGGER.info("[clock] elapsed | chunk={} dim={} lastSeen={} at={} elapsed={}",
+            Meanwhile.LOGGER.debug("[clock] elapsed | chunk={} dim={} lastSeen={} at={} elapsed={}",
                     new ChunkPos(key), level.dimension().location(), lastSeen, now, elapsed);
         }
 

@@ -398,7 +398,7 @@ public final class ChunkCatchUp {
         Mode current = mode;
         if (elapsed <= 0 && !current.allowNonPositiveElapsed()) {
             skippedNonPositive++;
-            Meanwhile.LOGGER.info("[catchup] skip | chunk={} dim={} lastSeen={} at={} elapsed={}"
+            Meanwhile.LOGGER.debug("[catchup] skip | chunk={} dim={} lastSeen={} at={} elapsed={}"
                             + " reason=non-positive",
                     new ChunkPos(key), level.dimension().location(), lastSeen, at, elapsed);
             return;
@@ -432,7 +432,7 @@ public final class ChunkCatchUp {
             pending.queued = true;
             WORKLIST.addLast(job);
         }
-        Meanwhile.LOGGER.info("[catchup] owed | chunk={} dim={} lastSeen={} at={} elapsed={}"
+        Meanwhile.LOGGER.debug("[catchup] owed | chunk={} dim={} lastSeen={} at={} elapsed={}"
                         + " added={} carried={} debt={} mode={} queue={}",
                 new ChunkPos(key), level.dimension().location(), lastSeen, at, elapsed,
                 owed, carried, total, current.label(), WORKLIST.size());
@@ -531,7 +531,7 @@ public final class ChunkCatchUp {
             worstDrainRealTicks = spentRealTicks;
         }
         if (jobsTaken > 0) {
-            Meanwhile.LOGGER.info("[catchup] drain | dim={} jobs={} realTicks={} budget={}"
+            Meanwhile.LOGGER.debug("[catchup] drain | dim={} jobs={} realTicks={} budget={}"
                             + " slice={} took={}us queue={}",
                     level.dimension().location(), jobsTaken, spentRealTicks, budgetRealTicks,
                     sliceTicks, nanos / 1000L, WORKLIST.size());
@@ -597,15 +597,19 @@ public final class ChunkCatchUp {
         Sweep whole = pending.toSweep();
         SWEPT.computeIfAbsent(level.dimension(), ignored -> new ConcurrentHashMap<>())
                 .put(job.chunkPos(), whole);
-        Meanwhile.LOGGER.info("[catchup] sweep | chunk={} dim={} lastSeen={} at={} elapsed={}"
+        Meanwhile.LOGGER.debug("[catchup] sweep | chunk={} dim={} lastSeen={} at={} elapsed={}"
                         + " dispatched={} mode={} attempted={} jumped={} declined={}"
                         + " realTicks={} jumpedTicks={} slices={} paidOver={} ticks",
                 pos, level.dimension().location(), whole.lastSeen(), whole.at(), whole.elapsed(),
                 whole.dispatched(), current.label(), whole.attempted(), whole.jumped(),
                 whole.declined(), whole.realTicks(), whole.jumpedTicks(), pending.slices,
                 level.getGameTime() - pending.at);
-        for (Attempt attempt : whole.attempts()) {
-            Meanwhile.LOGGER.info("[catchup] be | chunk={} {}", pos, attempt.summary());
+        // Guarded rather than merely demoted: summary() builds a string per block entity in the
+        // chunk, and that is paid whether or not anything goes on to print it.
+        if (Meanwhile.LOGGER.isDebugEnabled()) {
+            for (Attempt attempt : whole.attempts()) {
+                Meanwhile.LOGGER.debug("[catchup] be | chunk={} {}", pos, attempt.summary());
+            }
         }
         if (watcher != null) {
             watcher.afterSweep(level, chunk, whole);
