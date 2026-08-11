@@ -77,12 +77,16 @@ neoForge {
 
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            // Without this the run carries sourceSets.main only, where no gametest exists, and
+            // /test in a dev client reports that the mod registers none.
+            sourceSet = sourceSets.gametest
         }
 
         server {
             server()
             programArgument '--nogui'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            sourceSet = sourceSets.gametest
         }
 
         // This run config launches GameTestServer and runs all registered gametests, then exits.
