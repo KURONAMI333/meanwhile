@@ -1421,17 +1421,22 @@ public final class UnloadedCatchUpGameTests {
      * wait it was — same treatment as {@link UnloadWatch}.
      *
      * <p><b>Why it is needed.</b> The window used to start on {@code ChunkEvent.Load}, and the
-     * millstone does not start grinding on the tick its chunk arrives: over 34 runs the resume
-     * landed between 26 and 62 ticks after the load, against a window of 100 (GAP_LOG G144).
-     * One run under CPU contention did not resume inside the window at all and the probe read
-     * that as "the game is no longer ticking it", while its own samples showed the chunk loaded,
-     * the ticker registered and the rotation already restored.
+     * millstone does not start grinding on the tick its chunk arrives: over 56 runs the resume
+     * landed between 19 and 62 ticks after the load, against a window of 100, so the precondition
+     * was eating up to 62% of the measurement (GAP_LOG G144). One run in 25 did not resume inside
+     * the window at all, and the probe read that as "the game is no longer ticking it" while its
+     * own samples showed the chunk loaded, the ticker registered and the rotation already
+     * restored. <b>What makes that one run slow is not established</b> — it was seen under CPU
+     * contention, but the resume distribution does not move between an idle host and a loaded one
+     * (27 to 56 against 26 to 62), so the wall-clock story that explains {@link UnloadWatch} was
+     * measured and does not hold here. The window is started on the fact either way.
      *
-     * <p><b>Why it is in ticks, and this big.</b> Same reasoning as {@link UnloadWatch}: every
-     * mechanism containing a GameTest is denominated in ticks, and {@code GameTestServer} never
-     * sleeps, so about 3,850 ticks pass a second and a wait of this size is roughly a second of
-     * real time — about sixty times the longest resume measured. The line the probe prints on
-     * resuming carries both units, so a drift in that conversion is visible rather than assumed.
+     * <p><b>Why it is in ticks.</b> Same reasoning as {@link UnloadWatch}: every mechanism
+     * containing a GameTest is denominated in ticks, so a deadline in anything else would hand
+     * the failure to the framework's own timeout and lose the message saying what was waited for.
+     * <b>Why this big:</b> about sixty-four times the longest resume measured across those 56
+     * runs. The line the probe prints on resuming carries ticks and milliseconds both, so a run
+     * whose two units disagree with the rest is visible rather than assumed away.
      */
     private static final int RESUME_WAIT = 4000;
 
