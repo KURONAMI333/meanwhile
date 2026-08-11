@@ -111,7 +111,8 @@ public final class GenericCatchUp {
      * 200 and reset to 0 inside the same tick, so what is observed is 199 followed by 0. The value
      * the machine acts on is therefore the last value seen plus the step it was taking.
      */
-    private static void recordPeak(String typeKey, String path, long peak) {
+    private static void recordPeak(String typeKey, String path, long peak, BlockPos pos,
+                                   long from, long to, long rise) {
         String key = peakKey(typeKey, path);
         Long previous = PEAKS.get(key);
         // The smallest turnover ever seen, not the first one seen. Which observation arrives
@@ -120,11 +121,13 @@ public final class GenericCatchUp {
         // jump, a peak above it steps over a boundary.
         Long settled = PEAKS.merge(key, peak, Math::min);
         if (previous == null) {
-            Meanwhile.LOGGER.info("[generic] peak learned | type={} path={} turnsOverAt={}",
-                    typeKey, path, peak);
+            Meanwhile.LOGGER.info("[generic] peak learned | type={} path={} turnsOverAt={}"
+                            + " from={} to={} rise={} pos={}",
+                    typeKey, path, peak, from, to, rise, pos.toShortString());
         } else if (!previous.equals(settled)) {
-            Meanwhile.LOGGER.info("[generic] peak lowered | type={} path={} was={} now={}",
-                    typeKey, path, previous, settled);
+            Meanwhile.LOGGER.info("[generic] peak lowered | type={} path={} was={} now={}"
+                            + " from={} to={} rise={} pos={}",
+                    typeKey, path, previous, settled, from, to, rise, pos.toShortString());
         }
     }
 
@@ -451,7 +454,8 @@ public final class GenericCatchUp {
                 } else if (movement < 0) {
                     Long rise = lastRise.get(entry.getKey());
                     if (rise != null && isRewind(was, entry.getValue(), rise)) {
-                        recordPeak(typeKey, entry.getKey(), was + rise);
+                        recordPeak(typeKey, entry.getKey(), was + rise, pos, was,
+                                entry.getValue(), rise);
                     }
                     // Either it turned over, in which case the peak is now written down, or it
                     // changed direction, in which case the step it was rising by is stale.
