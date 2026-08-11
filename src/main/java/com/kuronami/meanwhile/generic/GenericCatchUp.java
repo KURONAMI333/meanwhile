@@ -183,7 +183,7 @@ public final class GenericCatchUp {
     }
 
     /** Test-only: start again knowing nothing, so the first-of-a-kind cost can be measured. */
-    public static void forgetPeaks() {
+    static void forgetPeaks() {
         OBSERVED.clear();
     }
 
@@ -237,7 +237,7 @@ public final class GenericCatchUp {
     /** Test-only: count every fall as a turnover, which is what this used to do. */
     private static volatile boolean rewindDistinction = true;
 
-    public static void setRewindDistinction(boolean on) {
+    static void setRewindDistinction(boolean on) {
         rewindDistinction = on;
         Meanwhile.LOGGER.info("[generic] rewind distinction | {}", on);
     }

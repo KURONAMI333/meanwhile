@@ -2,7 +2,7 @@ package com.kuronami.meanwhile.compat;
 
 import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.elapsed.ChunkCatchUp;
-import com.kuronami.meanwhile.elapsed.ChunkClock;
+import com.kuronami.meanwhile.elapsed.CatchUpTestAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -148,8 +148,8 @@ public final class FurnaceDeferralGameTests {
                     // The clock reconciles a chunk once and latches it, so a chunk that never
                     // left is never behind however old its stamp is. This reproduces the arrival
                     // with the arena intact, which is what makes the stale stamp count.
-                    ChunkClock.setStampOffset(chunk, 0L);
-                    ChunkClock.rearm(level, chunk);
+                    CatchUpTestAccess.setStampOffset(chunk, 0L);
+                    CatchUpTestAccess.rearm(level, chunk);
                     step = Step.WATCHING;
                 }
                 case WATCHING, DONE -> {
@@ -177,9 +177,9 @@ public final class FurnaceDeferralGameTests {
             // test's — measured, not supposed: the first run of this gate read a sweep of
             // `elapsed=120000` with no attempts in it (`ucu_g155_idle1.log`, chunk
             // [-147949, 383034]).
-            ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(pos));
+            CatchUpTestAccess.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(pos));
             dispatchesAtStart = ChunkCatchUp.dispatches();
-            ChunkClock.setStampOffset(chunk, -GAP);
+            CatchUpTestAccess.setStampOffset(chunk, -GAP);
             Meanwhile.LOGGER.info("[compat] armed | pos={} chunk={} gap={} deferring={}",
                     pos.toShortString(), chunk, GAP, defer);
         }
@@ -314,9 +314,9 @@ public final class FurnaceDeferralGameTests {
 
         private void restore() {
             CompatibilityCoordinator.setDeferringFurnaces(deferralBefore);
-            ChunkClock.setStampOffset(chunk, 0L);
-            ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            ChunkCatchUp.forget(level);
+            CatchUpTestAccess.setStampOffset(chunk, 0L);
+            CatchUpTestAccess.setMode(ChunkCatchUp.Mode.PRODUCT);
+            CatchUpTestAccess.forget(level);
             helper.setBlock(FURNACE, Blocks.AIR);
         }
     }

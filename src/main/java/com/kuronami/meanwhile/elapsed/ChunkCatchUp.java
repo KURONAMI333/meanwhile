@@ -1185,7 +1185,7 @@ public final class ChunkCatchUp {
 
     // ---- what a test may set and ask ------------------------------------------------------
 
-    public static void setMode(Mode next) {
+    static void setMode(Mode next) {
         mode = next;
         Meanwhile.LOGGER.info("[catchup] mode | {} threshold={}", next.label(), next.threshold());
     }
@@ -1245,6 +1245,18 @@ public final class ChunkCatchUp {
     }
 
     /**
+     * Whether the drain has anything queued or part-paid right now.
+     *
+     * <p>The predicate {@link #forget} refuses on, exposed so that a gate about to reset the
+     * global state can wait for the level to go quiet instead of tripping over it. Check and
+     * call happen on the server thread with nothing between them, so what this answers is still
+     * true when {@code forget} looks.
+     */
+    static boolean workInFlight() {
+        return !WORKLIST.isEmpty() || !PENDING.isEmpty();
+    }
+
+    /**
      * Test-only: drop every outstanding job and every debt this run has written down.
      *
      * <p>A test that hands out a large artificial debt writes it onto every chunk the sweep
@@ -1259,21 +1271,13 @@ public final class ChunkCatchUp {
      * dimension, not the caller's chunk, so a call made while the worklist holds anything
      * destroys another gate's queued work. Call it when this gate's own window is paid off.
      *
+     * @param caller which gate asked, as {@code Class#method}, for the refusal and the log line
+     *               to name. Worked out and passed in by {@code CatchUpTestAccess}, the one route
+     *               here: reading it off the stack is a diagnostic that serves tests only, and it
+     *               belongs on the source set that ships nowhere rather than in the mod.
      * @throws IllegalStateException if the worklist or the pending map is not empty
      */
-    /**
-     * Whether the drain has anything queued or part-paid right now.
-     *
-     * <p>The predicate {@link #forget} refuses on, exposed so that a gate about to reset the
-     * global state can wait for the level to go quiet instead of tripping over it. Check and
-     * call happen on the server thread with nothing between them, so what this answers is still
-     * true when {@code forget} looks.
-     */
-    static boolean workInFlight() {
-        return !WORKLIST.isEmpty() || !PENDING.isEmpty();
-    }
-
-    public static void forget(ServerLevel level) {
+    static void forget(ServerLevel level, String caller) {
         // The stop, and the reason it is a throw rather than a note.
         //
         // WORKLIST and PENDING are global. Whatever is in them was put there by whichever gate
@@ -1291,7 +1295,7 @@ public final class ChunkCatchUp {
         if (workInFlight()) {
             throw new IllegalStateException("ChunkCatchUp.forget(" + level.dimension().location()
                     + ") was called with catch-up work in flight: " + WORKLIST.size()
-                    + " queued, " + PENDING.size() + " pending, from " + callerOfForget()
+                    + " queued, " + PENDING.size() + " pending, from " + caller
                     + ". forget() empties the global worklist and zeroes every chunk's debt in"
                     + " this dimension, so that work belongs to another gate and would be"
                     + " destroyed without either gate failing. Call it once this gate's own"
@@ -1317,20 +1321,7 @@ public final class ChunkCatchUp {
         WORKLIST.clear();
         PENDING.clear();
         Meanwhile.LOGGER.info("[catchup] forget | cleared={} orphaned={} queue={} pending={}"
-                + " from={}", cleared, orphaned, queued, pending, callerOfForget());
-    }
-
-    /**
-     * The first frame outside this class, as {@code Class#method}. Diagnostic only: which gate
-     * called the global reset, and from which of its own methods.
-     */
-    private static String callerOfForget() {
-        return StackWalker.getInstance()
-                .walk(frames -> frames
-                        .filter(frame -> !frame.getClassName().equals(ChunkCatchUp.class.getName()))
-                        .findFirst()
-                        .map(frame -> frame.getClassName() + "#" + frame.getMethodName())
-                        .orElse("<unknown>"));
+                + " from={}", cleared, orphaned, queued, pending, caller);
     }
 
     /**

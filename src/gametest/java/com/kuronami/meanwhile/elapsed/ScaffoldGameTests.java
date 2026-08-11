@@ -1,7 +1,7 @@
 package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
-import com.kuronami.meanwhile.generic.GenericCatchUp;
+import com.kuronami.meanwhile.generic.GenericTestAccess;
 import java.util.List;
 import java.util.function.LongSupplier;
 import net.minecraft.core.BlockPos;
@@ -200,7 +200,7 @@ public final class ScaffoldGameTests {
             // Cold both times: the first furnace in a world has to watch a counter turn over
             // before it may jump one, and a warm table would make the second arm a different
             // measurement.
-            GenericCatchUp.forgetPeaks();
+            GenericTestAccess.forgetPeaks();
             ChunkCatchUp.setObserver(index == 0 ? new Silent() : null);
             // Both axes of the drain pinned to this test's own configuration: the instalment by
             // setBudget, the level tick's stopping point by a clock this test drives. setBudget
@@ -303,7 +303,7 @@ public final class ScaffoldGameTests {
             ChunkCatchUp.setObserver(null);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
             ChunkCatchUp.restoreBudget();
-            ChunkCatchUp.forget(level);
+            CatchUpTestAccess.forget(level);
             helper.setBlock(SUBJECT, Blocks.AIR);
         }
     }

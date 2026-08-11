@@ -70,7 +70,7 @@ public final class FurnaceWideGameTests {
             batch = "furnacewide", timeoutTicks = 16200)
     public static void furnaceGoingOutIsReproducedIncludingItsBlockState(GameTestHelper helper) {
         RoundTripImages.install();
-        com.kuronami.meanwhile.generic.GenericCatchUp.setRewindDistinction(!rawTurnoverRequested());
+        com.kuronami.meanwhile.generic.GenericTestAccess.setRewindDistinction(!rawTurnoverRequested());
         if (!ChunkCatchUp.isInstalled()) {
             helper.fail("the catch-up is not installed, so this run measures nothing;"
                     + " ChunkCatchUp.install() is called unconditionally from the mod's"
@@ -461,7 +461,7 @@ public final class FurnaceWideGameTests {
             }
             ChunkCatchUp.setObserver(null);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            ChunkCatchUp.forget(level);
+            CatchUpTestAccess.forget(level);
             RoundTripImages.stopWatching();
 
             if (failure != null) {
