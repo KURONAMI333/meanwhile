@@ -149,6 +149,27 @@ public class FurnaceSubject implements CatchUpSubject {
                 Blocks.FURNACE.defaultBlockState(), 2);
     }
 
+    /**
+     * Takes the furnace out of the world, contents first.
+     *
+     * <p>For the callers that leave one in a state the game will not resolve. A furnace carried
+     * past {@code cookingProgress == cookingTotalTime} never satisfies that equality again, so a
+     * lit one left standing counts upward for as long as its fuel lasts, and the fall when it
+     * goes out reads as a counter turning over at a value no furnace reaches on its own — which
+     * is where the wild {@code CookTime turnsOverAt=9401} sighting came from (GAP_LOG G137 §1).
+     *
+     * <p>The contents go first because vanilla spills a container when its block is removed, and
+     * item entities dropped into an arena outlive the test that made them.
+     */
+    public void clear(GameTestHelper helper) {
+        AbstractFurnaceBlockEntity furnace = furnace(helper);
+        if (furnace != null) {
+            furnace.clearContent();
+        }
+        helper.setBlock(FURNACE, Blocks.AIR);
+        helper.setBlock(FURNACE.above(), Blocks.AIR);
+    }
+
     @Override
     public void simulate(GameTestHelper helper, int ticks, RandomSource random) {
         ServerLevel level = helper.getLevel();

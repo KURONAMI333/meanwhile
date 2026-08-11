@@ -135,13 +135,29 @@ public class HarnessGameTests {
                 helper, new FurnaceSubject(), FURNACE_TICKS, SEED_SIMULATED));
     }
 
+    /**
+     * The negative control for the comparison above, and the one test here that builds a machine
+     * the game cannot resolve.
+     *
+     * <p>The broken arm carries {@code cookingProgress} across {@code cookingTotalTime} in one
+     * jump, and vanilla's completion test is {@code ==}. A furnace left standing on the far side
+     * of that boundary never satisfies it again and counts upward for as long as it stays lit, so
+     * it has to come out of the world on every path, including every failure — a test that leaves
+     * one behind is teaching the rest of the run a value no furnace reaches on its own (GAP_LOG
+     * G137 §1, G139).
+     */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", timeoutTicks = 400)
     public static void furnaceComparisonDetectsMissedTransitions(GameTestHelper helper) {
-        DifferentialHarness.assertVerdict(helper, DifferentialHarness.requireDetects(
-                "furnace jumped past its state changes",
-                DifferentialHarness.compareExact(
-                        helper, new FurnaceSubject(true), FURNACE_TICKS, SEED_SIMULATED)));
+        FurnaceSubject subject = new FurnaceSubject(true);
+        try {
+            DifferentialHarness.assertVerdict(helper, DifferentialHarness.requireDetects(
+                    "furnace jumped past its state changes",
+                    DifferentialHarness.compareExact(
+                            helper, subject, FURNACE_TICKS, SEED_SIMULATED)));
+        } finally {
+            subject.clear(helper);
+        }
     }
 
     // ---- is skipping actually cheaper? -----------------------------------------------
