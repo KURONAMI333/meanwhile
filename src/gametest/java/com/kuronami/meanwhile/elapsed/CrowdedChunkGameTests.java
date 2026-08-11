@@ -2,7 +2,9 @@ package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.LongSupplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
@@ -70,7 +72,7 @@ public final class CrowdedChunkGameTests {
      * property of where the run put the arena. The floor is what makes the reading a crowd rather
      * than a couple; the exact number is reported next to every figure and is not asserted on.
      */
-    private static final int FLOOR = 24;
+    private static final int FLOOR = 60;
 
     /** Ticks the fake clock adds per reading. */
     private static final long CLOCK_STEP = 250_000L;
@@ -144,8 +146,42 @@ public final class CrowdedChunkGameTests {
         private Crowd(GameTestHelper helper) {
             this.helper = helper;
             this.level = helper.getLevel();
-            this.target = new ChunkPos(helper.absolutePos(BlockPos.ZERO));
             this.arena = UnloadedCatchUpGameTests.arenaChunks(helper);
+            this.target = busiest(helper);
+        }
+
+        /**
+         * The arena chunk holding the most of this test's interior positions.
+         *
+         * <p>Not the chunk the structure block is in. A 9-wide arena placed at an arbitrary
+         * offset straddles a 16-wide chunk, and taking the corner's chunk made the measured
+         * population a lottery: three runs of this test placed 100, 24 and 12 machines in it
+         * (GAP_LOG G151). A figure whose population changes by eight times between runs describes
+         * nothing. The busiest chunk is the one the arena has most of, so the count is stable
+         * whatever the offset, and it is still reported rather than assumed.
+         */
+        private ChunkPos busiest(GameTestHelper helper) {
+            Map<ChunkPos, Integer> counts = new HashMap<>();
+            for (BlockPos pos : interior(helper)) {
+                counts.merge(new ChunkPos(pos), 1, Integer::sum);
+            }
+            return counts.entrySet().stream()
+                    .max(Map.Entry.comparingByValue())
+                    .map(Map.Entry::getKey)
+                    .orElse(new ChunkPos(helper.absolutePos(BlockPos.ZERO)));
+        }
+
+        /** Every position this test is willing to put a machine at, in arena order. */
+        private static List<BlockPos> interior(GameTestHelper helper) {
+            List<BlockPos> all = new ArrayList<>();
+            for (int x = 1; x < 8; x++) {
+                for (int z = 1; z < 8; z++) {
+                    for (int y = 1; y < 5; y++) {
+                        all.add(helper.absolutePos(new BlockPos(x, y, z)));
+                    }
+                }
+            }
+            return all;
         }
 
         private void step() {
@@ -255,14 +291,12 @@ public final class CrowdedChunkGameTests {
          */
         private int fill() {
             List<BlockPos> spots = new ArrayList<>();
-            for (int x = 1; x < 8 && spots.size() < INTENDED; x++) {
-                for (int z = 1; z < 8 && spots.size() < INTENDED; z++) {
-                    for (int y = 1; y < 5 && spots.size() < INTENDED; y++) {
-                        BlockPos abs = helper.absolutePos(new BlockPos(x, y, z));
-                        if (new ChunkPos(abs).equals(target)) {
-                            spots.add(abs);
-                        }
-                    }
+            for (BlockPos abs : interior(helper)) {
+                if (spots.size() >= INTENDED) {
+                    break;
+                }
+                if (new ChunkPos(abs).equals(target)) {
+                    spots.add(abs);
                 }
             }
             int in = 0;

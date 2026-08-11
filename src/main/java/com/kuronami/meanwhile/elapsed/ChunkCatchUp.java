@@ -285,17 +285,34 @@ public final class ChunkCatchUp {
     /**
      * Ticks of debt one chunk may be given in one level tick.
      *
-     * <p>Measured rather than picked. Against a millstone owing 120000 ticks, the longest single
-     * drain was 4786us settling it in one payment, 2643us at 8000, and then flat at roughly 600
-     * to 680us for 1000, 500 and 250 alike — below about a thousand the cost stops falling,
-     * because what is left is the fixed cost of a drain rather than the work in it. (A reading of
-     * 6216us at 100 came from the first phase measured in a run and is a cold one; the shape of
-     * the rest is what the choice rests on.)
+     * <p><b>Left where it was, because the rule that should set it does not close.</b> Two bounds
+     * were measured and they point in opposite directions (GAP_LOG G151).
      *
-     * <p>1000 is the largest value still on that floor, which buys the same spike as 250 while
-     * settling in a quarter of the instalments: 120 rather than 480. For the 120000-tick absence
-     * measured, that is a machine that takes about six seconds of real time to catch up, which
-     * reads as a machine spinning up rather than as a stall.
+     * <p>From above: a level tick spends {@link #BUDGET_NANOS} plus one machine's slice, because
+     * the walk stops on a machine boundary and cannot stop inside one — the state that authorises
+     * a jump is built up over the whole window and is not resumable without reopening the jump
+     * learning (GAP_LOG G137). One real tick of catch-up costs about 18us here, measured twice on
+     * a crowded chunk (7135us over 410 real ticks, 4875us over 261), dominated by the jump
+     * learning serialising the block entity once a tick. For a machine that never jumps and so
+     * really does run every tick of its slice, that puts a slice of 250 at 22.7% of a tick on a
+     * host half as fast, and only a slice near 100 inside a tenth of a tick.
+     *
+     * <p>From below: the jumping stops paying once the slice is shorter than the regime the
+     * machine is in. A furnace carried over a 900-tick window ran 10 real ticks at a slice of
+     * 1000 and 13 at 250, but 309 at 100 — its burn regime is 300 ticks, and a window shorter
+     * than that cannot be jumped across. At that point the catch-up is real ticking with extra
+     * bookkeeping, which is the opposite of what it is for.
+     *
+     * <p>No value satisfies both. Lowering this is not the fix: the overshoot is the full
+     * real-tick price only for machines that cannot jump, and for those the answer is to bound
+     * the window inside {@link GenericCatchUp#catchUp} by time as well, which is a change to its
+     * per-tick loop and to how a part-carried machine is accounted for. That is left for the
+     * supervisor rather than guessed at here.
+     *
+     * <p>What the value below still rests on is the original measurement: against a millstone
+     * owing 120000 ticks the longest single drain was 4786us settling it in one payment, 2643us
+     * at 8000, and then flat at roughly 600 to 680us for 1000, 500 and 250 alike. 1000 is the
+     * largest value on that floor, and it settles in 120 instalments rather than 480.
      */
     public static final int SLICE_TICKS = 1000;
     /**
