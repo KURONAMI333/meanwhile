@@ -1,6 +1,6 @@
 # Meanwhile (MW)
 
-> Catches up the ticks it skipped, instead of throwing them away.
+> Advances the block entities in a chunk by the ticks they missed while it was unloaded.
 
 [![License: All Rights Reserved](https://img.shields.io/badge/License-All%20Rights%20Reserved-lightgrey.svg)](LICENSE)
 [![Modrinth](https://img.shields.io/badge/Modrinth-meanwhile-00AF5C)](https://modrinth.com/mod/meanwhile)
