@@ -22,16 +22,23 @@ ${mod_description}
 #[[mixins]]
 #config="meanwhile-loaded.mixins.json"
 
+# SERVER on both, following the 1.21.1 jars of the mods that do the same job (Unloaded Activity
+# v0.6.7, Chunky, Spark). Everything here happens on a chunk the server owns, from the server's
+# own tick: there is no client class, no renderer, no packet and no screen, so a client that does
+# not have it installed is not missing anything a server that does can tell it about.
+#
+# No displayTest. None of those four jars carries one; the IGNORE_ALL_VERSION advice that turns up
+# in search results is old Forge and does not describe this version.
 [[dependencies.${mod_id}]]
     modId="neoforge"
     type="required"
     versionRange="[${neo_version},)"
     ordering="NONE"
-    side="BOTH"
+    side="SERVER"
 
 [[dependencies.${mod_id}]]
     modId="minecraft"
     type="required"
     versionRange="${minecraft_version_range}"
     ordering="NONE"
-    side="BOTH"
+    side="SERVER"
