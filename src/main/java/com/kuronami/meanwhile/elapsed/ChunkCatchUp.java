@@ -325,11 +325,30 @@ public final class ChunkCatchUp {
     private static volatile int drainFailures;
     private static volatile boolean drainFailureReported;
 
-    /** Cumulative, per chunk, so that paying the same absence twice can be asserted against. */
+    /**
+     * Cumulative, per chunk, so that paying the same absence twice can be asserted against.
+     *
+     * <p>Kept only while {@link #recordRunningTotals} is on, which nothing in the product turns
+     * on. They are the same shape of leak {@link #SWEPT} was — one entry per chunk ever swept,
+     * never evicted, so a server whose players keep moving accumulates three map entries for
+     * every chunk they have ever passed through — and unlike {@link #SWEPT} they cannot be
+     * dropped when the chunk goes, because what they are for is being read back across a round
+     * trip ({@code UnloadedCatchUpGameTests:1114}). Nothing in the product reads them at all
+     * (GAP_LOG G142), so the answer is not to evict them but not to write them.
+     */
     private static final Map<Job, Long> owedTotal = new ConcurrentHashMap<>();
     private static final Map<Job, Long> paidTotal = new ConcurrentHashMap<>();
-    /** Instalments the last settled absence took, per chunk. */
+    /** Instalments the last settled absence took, per chunk. See {@link #owedTotal}. */
     private static final Map<Job, Integer> slicesUsed = new ConcurrentHashMap<>();
+
+    /**
+     * Whether the three maps above are filled in.
+     *
+     * <p>Off in the product and turned on by the gametest entrypoint, which is the only thing
+     * that reads them. Off, the three accessors answer 0 — a test that wants them must ask for
+     * them first.
+     */
+    private static volatile boolean recordRunningTotals;
 
     private static volatile long drainNanos;
     private static volatile long worstDrainNanos;
@@ -423,7 +442,9 @@ public final class ChunkCatchUp {
         long total = carried + owed;
         setDebt(chunk, total);
         Job job = new Job(level.dimension(), key);
-        owedTotal.merge(job, owed, Long::sum);
+        if (recordRunningTotals) {
+            owedTotal.merge(job, owed, Long::sum);
+        }
 
         Pending pending = PENDING.computeIfAbsent(job,
                 ignored -> new Pending(key, lastSeen, at, level.dimension()));
@@ -582,7 +603,9 @@ public final class ChunkCatchUp {
                         current.spend());
         pending.absorb(sliceResult);
         pending.slices++;
-        paidTotal.merge(job, (long) Math.max(slice, 0), Long::sum);
+        if (recordRunningTotals) {
+            paidTotal.merge(job, (long) Math.max(slice, 0), Long::sum);
+        }
 
         long left = remaining <= 0 ? 0L : remaining - slice;
         setDebt(chunk, left);
@@ -593,7 +616,9 @@ public final class ChunkCatchUp {
 
         pending.queued = false;
         PENDING.remove(job);
-        slicesUsed.put(job, pending.slices);
+        if (recordRunningTotals) {
+            slicesUsed.put(job, pending.slices);
+        }
         Sweep whole = pending.toSweep();
         SWEPT.computeIfAbsent(level.dimension(), ignored -> new ConcurrentHashMap<>())
                 .put(job.chunkPos(), whole);
@@ -966,6 +991,10 @@ public final class ChunkCatchUp {
      * <p>A test that hands out a large artificial debt writes it onto every chunk the sweep
      * touches while its mode is in force, not only the one it is watching. Left behind, those
      * keep being paid off during whatever runs next.
+     *
+     * <p>Which chunks to zero comes from {@link #owedTotal}, so this clears debts only while
+     * the running totals are being kept. That is every run this is reachable from — the same
+     * source set turns both on — and the product calls neither.
      */
     public static void forget(ServerLevel level) {
         for (Job job : new ArrayList<>(owedTotal.keySet())) {
@@ -983,7 +1012,10 @@ public final class ChunkCatchUp {
         Meanwhile.LOGGER.info("[catchup] forget | queue and debts cleared");
     }
 
-    /** How many instalments the last settled absence on this chunk took. */
+    /**
+     * How many instalments the last settled absence on this chunk took. 0 unless
+     * {@link #setRecordRunningTotals} asked for the figure to be kept.
+     */
     public static int slicesFor(ServerLevel level, ChunkPos pos) {
         return slicesUsed.getOrDefault(new Job(level.dimension(), pos.toLong()), 0);
     }
@@ -1026,14 +1058,34 @@ public final class ChunkCatchUp {
         return WORKLIST.size();
     }
 
-    /** What this chunk has been told it is owed, over the whole run. */
+    /**
+     * What this chunk has been told it is owed, over the whole run. 0 unless
+     * {@link #setRecordRunningTotals} asked for the figure to be kept.
+     */
     public static long owedFor(ServerLevel level, ChunkPos pos) {
         return owedTotal.getOrDefault(new Job(level.dimension(), pos.toLong()), 0L);
     }
 
-    /** What has actually been handed over for it, over the whole run. */
+    /**
+     * What has actually been handed over for it, over the whole run. 0 unless
+     * {@link #setRecordRunningTotals} asked for the figure to be kept.
+     */
     public static long paidFor(ServerLevel level, ChunkPos pos) {
         return paidTotal.getOrDefault(new Job(level.dimension(), pos.toLong()), 0L);
+    }
+
+    /**
+     * Test-only: keep the per-chunk running totals, at the cost of three map entries per chunk
+     * ever swept that nothing evicts. See {@link #owedTotal} for why nothing evicts them.
+     */
+    public static void setRecordRunningTotals(boolean record) {
+        recordRunningTotals = record;
+        Meanwhile.LOGGER.info("[catchup] running totals | {}", record ? "kept" : "not kept");
+    }
+
+    /** Whether the per-chunk running totals are being kept. */
+    public static boolean recordsRunningTotals() {
+        return recordRunningTotals;
     }
 
     /** Ticks still outstanding on a loaded chunk, or 0. */

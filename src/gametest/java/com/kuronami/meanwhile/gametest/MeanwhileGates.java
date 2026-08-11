@@ -11,6 +11,7 @@ import com.kuronami.meanwhile.bench.TickCostBench;
 import com.kuronami.meanwhile.chunkprobe.ChunkEventProbe;
 import com.kuronami.meanwhile.chunkprobe.ChunkRoundTripGameTests;
 import com.kuronami.meanwhile.elapsed.CatchUpGuardGameTests;
+import com.kuronami.meanwhile.elapsed.ChunkCatchUp;
 import com.kuronami.meanwhile.elapsed.CorpusSweepGameTests;
 import com.kuronami.meanwhile.elapsed.DimensionKeyGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceSpanGameTests;
@@ -56,6 +57,13 @@ public class MeanwhileGates {
     private static final String LOADED_MARKER = "meanwhile-loaded.properties";
 
     public MeanwhileGates(IEventBus modEventBus, ModContainer modContainer) {
+        // The per-chunk running totals the gates read back. Off in the product, because they
+        // are one entry per chunk ever swept that nothing evicts and nothing in the product
+        // ever reads (GAP_LOG G142). Asked for here rather than by the tests that read them:
+        // this class is constructed before any gate runs, and a test that had to remember to
+        // switch them on would read 0 and call it a balanced ledger.
+        ChunkCatchUp.setRecordRunningTotals(true);
+
         // What the generic catch-up can skip on a burning furnace, what a full round trip does
         // to one, and the population survey over whatever types are loaded. All vanilla, so they
         // go into every standard run.
