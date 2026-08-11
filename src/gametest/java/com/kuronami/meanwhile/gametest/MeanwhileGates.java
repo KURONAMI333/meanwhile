@@ -9,6 +9,7 @@ import com.kuronami.meanwhile.SchedulerGameTests;
 import com.kuronami.meanwhile.WriteFaceGameTests;
 import com.kuronami.meanwhile.bench.TickCostBench;
 import com.kuronami.meanwhile.chunkprobe.ChunkEventProbe;
+import com.kuronami.meanwhile.compat.FurnaceDeferralGameTests;
 import com.kuronami.meanwhile.chunkprobe.ChunkRoundTripGameTests;
 import com.kuronami.meanwhile.elapsed.CatchUpGuardGameTests;
 import com.kuronami.meanwhile.elapsed.ChunkCatchUp;
@@ -77,6 +78,7 @@ public class MeanwhileGates {
             event.register(PeakCorroborationGameTests.class);
             event.register(DimensionKeyGameTests.class);
             event.register(CrowdedChunkGameTests.class);
+            event.register(FurnaceDeferralGameTests.class);
         });
         Meanwhile.LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
                 + " wide, corpus sweep, guard, scaffold, peak corroboration, dimension key,"
