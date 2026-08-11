@@ -46,7 +46,19 @@ public final class FurnaceSpanGameTests {
 
     /** Long enough to cross several smelts at 200 ticks each. */
     private static final int GAP = 3000;
-    /** Real ticks the furnace is given to light before anything is recorded. */
+    /**
+     * Real ticks the furnace is given to light before anything is recorded.
+     *
+     * <p>Run through the block's own ticker inside the same callback that records the start tag,
+     * not by waiting that many server ticks. A furnace standing in the arena between two server
+     * ticks is a furnace anything else in the server may tick, and this arena sits in a chunk
+     * that owes tens of thousands of ticks — a GameTest world loads and unloads the same chunks
+     * all run, so by the time this batch runs the arena's chunk comes back owing a debt and the
+     * mod catches it up. That is the mod behaving correctly; what was wrong is scaffolding that
+     * called itself pristine while standing in that chunk. Nothing can interleave inside one
+     * callback, so the count of ticker calls before the snapshot is now five whatever else the
+     * server is doing.
+     */
     private static final int SETTLE = 5;
 
     private static final int INPUT_COUNT = 64;
@@ -110,12 +122,21 @@ public final class FurnaceSpanGameTests {
     private static void measure(GameTestHelper helper, GenericCatchUp.Mode mode, Expect expect) {
         ServerLevel level = helper.getLevel();
         BlockPos pos = helper.absolutePos(FURNACE);
-        helper.setBlock(FURNACE, Blocks.FURNACE);
-        load(helper);
 
         helper.startSequence()
-                .thenExecuteAfter(SETTLE, () -> {
+                .thenExecute(() -> {
+                    // Placed, filled, lit and recorded without a server tick in between, so that
+                    // the furnace this arm measures is the one this arm built. See SETTLE.
+                    helper.setBlock(FURNACE, Blocks.FURNACE);
+                    load(helper);
                     HolderLookup.Provider registries = level.registryAccess();
+                    int settled = GenericCatchUp.tick(level, pos, SETTLE);
+                    if (settled != SETTLE) {
+                        helper.fail("the furnace was not tickable for the whole settle, so the"
+                                + " recorded start is not the one this arm asked for: ran "
+                                + settled + " of " + SETTLE);
+                        return;
+                    }
                     BlockEntity blockEntity = level.getBlockEntity(pos);
                     if (blockEntity == null) {
                         helper.fail("no furnace block entity at " + FURNACE);
@@ -128,6 +149,17 @@ public final class FurnaceSpanGameTests {
                     if (start.getInt("BurnTime") <= 0) {
                         helper.fail("the furnace never lit, so there is no window to skip: "
                                 + start);
+                        return;
+                    }
+                    // The arm says it starts from a furnace that has not smelted anything. Said
+                    // rather than checked, this went wrong for months without a red run: a
+                    // part-cooked start moves every number the arm reports and moves both arms
+                    // together, so the comparison still agrees and only the recorded
+                    // observations move. Checked here, that becomes a failure.
+                    String impure = impurity(helper);
+                    if (impure != null) {
+                        helper.fail("the arm did not start from the furnace it built: " + impure
+                                + "; start=" + start);
                         return;
                     }
 
@@ -255,6 +287,30 @@ public final class FurnaceSpanGameTests {
         }
         blockEntity.loadWithComponents(tag.copy(), registries);
         blockEntity.setChanged();
+    }
+
+    /**
+     * What is left of an earlier smelt in the furnace, or null when there is none.
+     *
+     * <p>The settle is five ticks and a smelt is two hundred, so a furnace that has finished one
+     * has been ticked by something other than this arm.
+     */
+    @Nullable
+    private static String impurity(GameTestHelper helper) {
+        AbstractFurnaceBlockEntity furnace = furnace(helper);
+        if (furnace == null) {
+            return "there is no furnace block entity to read";
+        }
+        if (!furnace.recipesUsed.isEmpty()) {
+            return "it already has a recipe tally of " + furnace.recipesUsed;
+        }
+        if (!furnace.getItem(2).isEmpty()) {
+            return "its output slot already holds " + furnace.getItem(2);
+        }
+        if (furnace.getItem(0).getCount() != INPUT_COUNT) {
+            return "its input is down to " + furnace.getItem(0).getCount() + " of " + INPUT_COUNT;
+        }
+        return null;
     }
 
     private static void load(GameTestHelper helper) {
