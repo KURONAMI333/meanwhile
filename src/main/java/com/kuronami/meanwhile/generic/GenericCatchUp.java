@@ -25,6 +25,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Catch-up for a block entity whose type is unknown.
@@ -65,8 +68,8 @@ import java.util.Map;
 public final class GenericCatchUp {
 
     /**
-     * The value each rising counter has been seen turning over at, by block entity type and by
-     * the path of the tag inside it.
+     * The values each rising counter has been seen turning over at, by block entity type, by the
+     * path of the tag inside it, and by how often each value has been seen.
      *
      * <h3>Why a table of observations and not a tag standing next to the counter</h3>
      *
@@ -75,29 +78,113 @@ public final class GenericCatchUp {
      * {@code AbstractFurnaceBlockEntity} writes it — stops arriving at that boundary the moment a
      * jump steps over it, and it never arrives again: the furnace counts upward forever and
      * finishes nothing. Detecting that afterwards does not undo it. So there is no guess left in
-     * here. A counter is jumped only after this has watched it turn over at least once and
-     * written down where.
+     * here. A counter is jumped only after this has watched it turn over and written down where.
      *
      * <p>The key names a type, not a machine, so the cost is paid once per kind rather than once
      * per block: the first furnace in a world spends real ticks learning that its counter turns
      * over at 200, and every other furnace jumps immediately. No type knowledge is involved in
      * that — the type is the key of a table, not something this understands.
      *
-     * <p>Not persisted. A restart re-learns, at the price of one cycle per type.
+     * <h3>Why one observation of it is not enough</h3>
+     *
+     * <p>A fall is a turnover only if the machine put the counter back to where it starts, and
+     * nothing here can tell that from a counter being collapsed onto some other number. A furnace
+     * that has been carried past its {@code cookingTotalTime} climbs without limit — the boundary
+     * is written {@code ==} and is now behind it — and vanilla clamps it back onto that total the
+     * moment the fire goes out. The fall from 9400 to 200 is indistinguishable, here, from a
+     * counter that turns over at 9401. Taking the smallest value seen is no protection while the
+     * wrong one is the only one there.
+     *
+     * <p>So a value has to be seen {@link #CORROBORATION} times before a jump may be aimed at it.
+     * Until then the counter is worth one real tick each, which is exactly what already happens
+     * for a counter nothing has been seen about at all. The price is paid once per type: the
+     * first furnace in a world watches two cycles instead of one.
+     *
+     * <p>Not persisted. A restart re-learns, at the price of a few cycles per type.
      */
-    private static final Map<String, Long> PEAKS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, TreeMap<Long, Integer>> OBSERVED = new ConcurrentHashMap<>();
+
+    /**
+     * How many times one value has to be seen turning over before a jump may be aimed at it.
+     */
+    private static final int CORROBORATION = 2;
+
+    /**
+     * Distinct turnover values kept for one counter.
+     *
+     * <p>A counter that lands somewhere different every cycle would otherwise grow this table
+     * without limit. When it is full the largest value is dropped: what authorises a jump is the
+     * smallest corroborated value, so losing the largest can only ever shorten a jump.
+     */
+    private static final int DISTINCT_KEPT = 8;
+
+    /**
+     * Test-only: let a single observation authorise a jump, which is what this used to do.
+     *
+     * <p>Kept only to be measured doing the wrong thing. With this off, one fall that was not a
+     * turnover is enough to aim a jump at where it appeared to happen.
+     */
+    private static volatile boolean peakCorroboration = true;
+
+    public static void setPeakCorroboration(boolean on) {
+        peakCorroboration = on;
+        Meanwhile.LOGGER.info("[generic] peak corroboration | {}", on);
+    }
 
     private GenericCatchUp() {
     }
 
-    /** What has been learned so far, for a report. */
+    /** How many sightings of one value make it usable. */
+    private static int required() {
+        return peakCorroboration ? CORROBORATION : 1;
+    }
+
+    /** What may authorise a jump so far, for a report. */
     public static Map<String, Long> peaks() {
-        return new LinkedHashMap<>(PEAKS);
+        Map<String, Long> out = new LinkedHashMap<>();
+        for (Map.Entry<String, TreeMap<Long, Integer>> entry : OBSERVED.entrySet()) {
+            Long authorising = authorisingIn(entry.getValue());
+            if (authorising != null) {
+                out.put(entry.getKey(), authorising);
+            }
+        }
+        return out;
+    }
+
+    /** Every value seen and how often, including the ones that authorise nothing yet. */
+    public static Map<String, Map<Long, Integer>> observations() {
+        Map<String, Map<Long, Integer>> out = new LinkedHashMap<>();
+        OBSERVED.forEach((key, counts) -> {
+            synchronized (counts) {
+                out.put(key, new LinkedHashMap<>(counts));
+            }
+        });
+        return out;
+    }
+
+    /**
+     * The smallest value seen often enough to be aimed at, or null.
+     *
+     * <p>Smallest rather than first: which observation arrives first depends on run order, and a
+     * table whose contents depend on run order is not an observation. Small is also the safe
+     * direction — a value below the real boundary shortens a jump, one above it steps over.
+     */
+    @Nullable
+    private static Long authorisingIn(TreeMap<Long, Integer> counts) {
+        int needed = required();
+        synchronized (counts) {
+            for (Map.Entry<Long, Integer> entry : counts.entrySet()) {
+                if (entry.getValue() >= needed) {
+                    return entry.getKey();
+                }
+            }
+        }
+        return null;
     }
 
     /** Test-only: start again knowing nothing, so the first-of-a-kind cost can be measured. */
     public static void forgetPeaks() {
-        PEAKS.clear();
+        OBSERVED.clear();
     }
 
     private static String peakKey(String typeKey, String path) {
@@ -113,21 +200,29 @@ public final class GenericCatchUp {
      */
     private static void recordPeak(String typeKey, String path, long peak, BlockPos pos,
                                    long from, long to, long rise) {
-        String key = peakKey(typeKey, path);
-        Long previous = PEAKS.get(key);
-        // The smallest turnover ever seen, not the first one seen. Which observation arrives
-        // first depends on run order, and a table whose contents depend on run order is not an
-        // observation. Small is also the safe direction: a peak below the real one shortens a
-        // jump, a peak above it steps over a boundary.
-        Long settled = PEAKS.merge(key, peak, Math::min);
-        if (previous == null) {
-            Meanwhile.LOGGER.info("[generic] peak learned | type={} path={} turnsOverAt={}"
+        TreeMap<Long, Integer> counts =
+                OBSERVED.computeIfAbsent(peakKey(typeKey, path), ignored -> new TreeMap<>());
+        Long before = authorisingIn(counts);
+        int seen;
+        synchronized (counts) {
+            seen = counts.merge(peak, 1, Integer::sum);
+            while (counts.size() > DISTINCT_KEPT) {
+                counts.pollLastEntry();
+            }
+        }
+        Long after = authorisingIn(counts);
+
+        // Every sighting up to the one that makes the value usable, and nothing after that: a
+        // counter jumping every cycle would otherwise write a line per cycle for the rest of
+        // the run, and the sightings that decide anything are the first two.
+        if (seen <= CORROBORATION) {
+            Meanwhile.LOGGER.info("[generic] peak seen | type={} path={} turnsOverAt={} seen={}"
                             + " from={} to={} rise={} pos={}",
-                    typeKey, path, peak, from, to, rise, pos.toShortString());
-        } else if (!previous.equals(settled)) {
-            Meanwhile.LOGGER.info("[generic] peak lowered | type={} path={} was={} now={}"
-                            + " from={} to={} rise={} pos={}",
-                    typeKey, path, previous, settled, from, to, rise, pos.toShortString());
+                    typeKey, path, peak, seen, from, to, rise, pos.toShortString());
+        }
+        if (!Objects.equals(before, after)) {
+            Meanwhile.LOGGER.info("[generic] peak authorises | type={} path={} turnsOverAt={}"
+                            + " was={}", typeKey, path, after, before);
         }
     }
 
@@ -172,7 +267,8 @@ public final class GenericCatchUp {
 
     @Nullable
     private static Long peakOf(String typeKey, String path) {
-        return PEAKS.get(peakKey(typeKey, path));
+        TreeMap<Long, Integer> counts = OBSERVED.get(peakKey(typeKey, path));
+        return counts == null ? null : authorisingIn(counts);
     }
 
     /** Every integral scalar in a tag, by dotted path, for watching values turn over. */
@@ -868,8 +964,8 @@ public final class GenericCatchUp {
             if (delta.delta() > 0 && limit == Delta.NO_CEILING) {
                 result.refuse("peak-not-seen",
                         delta.pathString() + " rose by " + delta.delta()
-                                + " and has not yet been watched turning over, so where it is"
-                                + " heading is not known");
+                                + " and has not yet been watched turning over at the same value"
+                                + " twice, so where it is heading is not established");
                 return 0;
             }
             // Two ticks are held back rather than one. The first is the boundary itself, which
