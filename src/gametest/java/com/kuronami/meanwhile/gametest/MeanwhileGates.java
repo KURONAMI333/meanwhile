@@ -17,6 +17,7 @@ import com.kuronami.meanwhile.elapsed.FurnaceWideGameTests;
 import com.kuronami.meanwhile.elapsed.ScaffoldGameTests;
 import com.kuronami.meanwhile.elapsed.UnloadedCatchUpGameTests;
 import com.kuronami.meanwhile.generic.GenericCatchUpGameTests;
+import com.kuronami.meanwhile.generic.PeakCorroborationGameTests;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.ModList;
@@ -63,9 +64,10 @@ public class MeanwhileGates {
             event.register(CorpusSweepGameTests.class);
             event.register(CatchUpGuardGameTests.class);
             event.register(ScaffoldGameTests.class);
+            event.register(PeakCorroborationGameTests.class);
         });
         Meanwhile.LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
-                + " wide, corpus sweep, guard, scaffold");
+                + " wide, corpus sweep, guard, scaffold, peak corroboration");
 
         // The unloaded catch-up gate is measured against a Create machine, so it exists only
         // when Create does.
