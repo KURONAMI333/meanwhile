@@ -181,6 +181,15 @@ public final class DimensionKeyGameTests {
 
         private void armOverworld() {
             ServerLevel hell = requireNether();
+            // Wait for the level to go quiet before resetting anything global. This arm used to
+            // clear the worklist while other gates still had jobs in it — measured at 3 queued
+            // and 3 pending (GAP_LOG G157) — which threw that work away and had it re-queued and
+            // paid off inside the window this test was about to open. Nothing here failed when
+            // it happened; other gates moved. Staying in this step costs ticks off the RUN_TICKS
+            // budget, so a level that never goes quiet is reported rather than waited on for ever.
+            if (ChunkCatchUp.workInFlight()) {
+                return;
+            }
             ChunkCatchUp.forget(overworld);
             ChunkCatchUp.forget(hell);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(restrictTo));
