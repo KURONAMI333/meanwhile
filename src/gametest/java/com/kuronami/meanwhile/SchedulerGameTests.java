@@ -1,5 +1,6 @@
 package com.kuronami.meanwhile;
 
+import com.kuronami.meanwhile.elapsed.CatchUpTestAccess;
 import com.kuronami.meanwhile.harness.WorldStateDigest;
 import com.kuronami.meanwhile.scheduler.DeferralScheduler;
 import net.minecraft.core.BlockPos;
@@ -441,6 +442,26 @@ public class SchedulerGameTests {
      *
      * <p>The assertion is that it smelts, not that a flag flipped. A furnace that is being
      * ticked produces iron; one that is skipped does not, whatever the ledger says about it.
+     *
+     * <h3>Where the iron has to come from</h3>
+     * <p>Ticking is not the only thing that can put iron in this furnace. The arena's chunks
+     * arrive owing the catch-up tens of thousands of ticks — GameTest stands each arena on
+     * ground an earlier one used — and an instalment reaching this furnace inside the window
+     * smelts too. The output would grow with the dispatch never resuming at all, and this test
+     * asserts only that it grew. That is the shape found in this gate's sibling,
+     * {@link HarnessGameTests#catchUpLeavesTheFurnaceTickableByTheGame}, where it was measured
+     * at 8.0 -> 16.0 in 2 runs of 18 and reproduced deliberately (GAP_LOG G163, G164 ruling
+     * 43). So the arena's debt is dropped before the window opens, the same way and for the
+     * same reason.
+     *
+     * <p><b>Prevented here rather than attributed.</b> The sibling also carries a ceiling on
+     * the growth, which fails rather than passes when something else moves the furnace. This
+     * one has no such ceiling: 600 ticks of smelting is exactly 3 items and the reading has
+     * been 3 in 77 of the 78 recorded runs, so any ceiling tight enough to catch an instalment
+     * would sit one item above a value that already lands on a completion boundary. An
+     * assertion nobody has watched fail is not evidence that it can fail, and this class is
+     * registered only when the loaded-scheme marker asks for it, so no run in the standing
+     * suite could watch it (GAP_LOG G165).
      */
     @PrefixGameTestTemplate(false)
     @GameTest(template = "empty9x5x9", templateNamespace = Meanwhile.MODID, batch = BATCH, timeoutTicks = 1200)
@@ -486,6 +507,11 @@ public class SchedulerGameTests {
                         + " trusting it");
                 return;
             }
+
+            // Immediately before the window, for the reason set out above: from here the arena
+            // owes the catch-up nothing and has nothing queued, so the output this window reads
+            // cannot have been put there by an instalment.
+            CatchUpTestAccess.forget(helper, level);
 
             helper.runAfterDelay(600L, () -> {
                 AbstractFurnaceBlockEntity resumed = furnace(helper, DEFERRED);
