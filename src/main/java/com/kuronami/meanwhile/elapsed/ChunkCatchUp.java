@@ -6,12 +6,15 @@ import com.kuronami.meanwhile.generic.GenericCatchUp;
 import com.kuronami.meanwhile.guard.CatchUpGuard;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.LongSupplier;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.BlockPos;
@@ -1245,83 +1248,72 @@ public final class ChunkCatchUp {
     }
 
     /**
-     * Whether the drain has anything queued or part-paid right now.
-     *
-     * <p>The predicate {@link #forget} refuses on, exposed so that a gate about to reset the
-     * global state can wait for the level to go quiet instead of tripping over it. Check and
-     * call happen on the server thread with nothing between them, so what this answers is still
-     * true when {@code forget} looks.
-     */
-    static boolean workInFlight() {
-        return !WORKLIST.isEmpty() || !PENDING.isEmpty();
-    }
-
-    /**
-     * Test-only: drop every outstanding job and every debt this run has written down.
+     * Test-only: drop the outstanding jobs and the debts of the chunks named, and nothing else.
      *
      * <p>A test that hands out a large artificial debt writes it onto every chunk the sweep
-     * touches while its mode is in force, not only the one it is watching. Left behind, those
-     * keep being paid off during whatever runs next.
+     * touches while its mode is in force, not only the one it is watching. Left behind on the
+     * gate's own arena, those keep being paid off during whatever runs next, which is what this
+     * clears.
      *
-     * <p>Which chunks to zero comes from {@link #owedTotal}, so this clears debts only while
-     * the running totals are being kept. That is every run this is reachable from — the same
-     * source set turns both on — and the product calls neither.
+     * <p><b>The reach is the chunks passed in, not the dimension.</b> It used to be the
+     * dimension: the worklist, the pending map and every recorded debt went, so a call made
+     * while another gate had a job in the queue discarded that gate's work. The work was then
+     * re-queued when its chunk was next offered and paid off inside whatever window was open at
+     * the time — the caller's own, if the caller was arming rather than tearing down. Nothing
+     * failed when that happened; the offending gate stayed green on every one of its own
+     * assertions while other gates' frozen values moved, 2 of 22 runs, and a required control
+     * went red, 1 of 36 (GAP_LOG G156, G157, G158).
      *
-     * <p><b>Throws if any catch-up work is in flight.</b> The reach of this method is the whole
-     * dimension, not the caller's chunk, so a call made while the worklist holds anything
-     * destroys another gate's queued work. Call it when this gate's own window is paid off.
+     * <p>A refusal keyed to "is anything in flight" was tried first and was wrong: {@link #pay}
+     * leaves a {@code Pending} unqueued when its chunk is absent or not tickable, and that job is
+     * picked up again when the chunk comes back. {@code queued=0, pending=N} is therefore an
+     * ordinary production state — a base the player walked away from — and a gate that met it
+     * could no longer tear itself down at all (G159, G160). Scoping the reach is what makes
+     * destroying another gate's state impossible, so the refusal moves to
+     * {@code CatchUpTestAccess}, where it asks the only question left: is this chunk yours.
      *
-     * @param caller which gate asked, as {@code Class#method}, for the refusal and the log line
-     *               to name. Worked out and passed in by {@code CatchUpTestAccess}, the one route
-     *               here: reading it off the stack is a diagnostic that serves tests only, and it
-     *               belongs on the source set that ships nowhere rather than in the mod.
-     * @throws IllegalStateException if the worklist or the pending map is not empty
+     * @param caller which gate asked, as {@code Class#method}, for the log line to name. Worked
+     *               out and passed in by {@code CatchUpTestAccess}, the one route here: reading
+     *               it off the stack is a diagnostic that serves tests only, and it belongs on
+     *               the source set that ships nowhere rather than in the mod.
+     * @param owned  the chunks the caller is entitled to drop, in this level's dimension.
      */
-    static void forget(ServerLevel level, String caller) {
-        // The stop, and the reason it is a throw rather than a note.
-        //
-        // WORKLIST and PENDING are global. Whatever is in them was put there by whichever gate
-        // owns that chunk, and this method empties both. Called while they hold anything, it
-        // discards another gate's queued work; that work is re-queued when its chunk is next
-        // offered and paid off inside whatever window is open at the time -- which is the
-        // caller's own, if the caller is arming rather than tearing down. That is why the gate
-        // in G156 stayed green on every one of its own assertions while other gates' frozen
-        // values moved (2 of 22 runs) and a required control went red (1 of 36).
-        //
-        // The check is on the state that gets destroyed, not on the name of the calling method.
-        // A rule keyed to arm()/restore() needs a list of which method names count as teardown,
-        // and a list is one entry away from exempting the next offender. Measured over one run
-        // (G157): 15 of 16 calls found the queue empty, and the one that did not was an arm path.
-        if (workInFlight()) {
-            throw new IllegalStateException("ChunkCatchUp.forget(" + level.dimension().location()
-                    + ") was called with catch-up work in flight: " + WORKLIST.size()
-                    + " queued, " + PENDING.size() + " pending, from " + caller
-                    + ". forget() empties the global worklist and zeroes every chunk's debt in"
-                    + " this dimension, so that work belongs to another gate and would be"
-                    + " destroyed without either gate failing. Call it once this gate's own"
-                    + " window is paid off -- see GAP_LOG G156 and G157.");
-        }
+    static void forget(ServerLevel level, String caller, Collection<ChunkPos> owned) {
+        Set<Job> jobs = new HashSet<>();
         int cleared = 0;
         int orphaned = 0;
-        for (Job job : new ArrayList<>(owedTotal.keySet())) {
-            if (!job.dimension().equals(level.dimension())) {
+        for (ChunkPos pos : owned) {
+            Job job = new Job(level.dimension(), pos.toLong());
+            jobs.add(job);
+            LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
+            if (chunk == null) {
+                // Gone before its debt was settled. Nothing to zero -- the debt is an attachment
+                // on a chunk that is not here -- and it is counted rather than silently skipped.
+                if (owedTotal.containsKey(job)) {
+                    orphaned++;
+                }
                 continue;
             }
-            ChunkPos pos = new ChunkPos(job.chunkPos());
-            LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
-            if (chunk != null) {
+            // Only when there is something to remove. setDebt marks the chunk unsaved, and a
+            // chunk marked unsaved for no reason is a save this gate caused somewhere else.
+            if (debtOf(chunk) != 0L) {
                 setDebt(chunk, 0L);
                 cleared++;
-            } else {
-                orphaned++;
             }
         }
-        int queued = WORKLIST.size();
-        int pending = PENDING.size();
-        WORKLIST.clear();
-        PENDING.clear();
-        Meanwhile.LOGGER.info("[catchup] forget | cleared={} orphaned={} queue={} pending={}"
-                + " from={}", cleared, orphaned, queued, pending, caller);
+        int queuedBefore = WORKLIST.size();
+        WORKLIST.removeIf(jobs::contains);
+        int dequeued = queuedBefore - WORKLIST.size();
+        int dropped = 0;
+        for (Job job : jobs) {
+            if (PENDING.remove(job) != null) {
+                dropped++;
+            }
+        }
+        Meanwhile.LOGGER.info("[catchup] forget | chunks={} cleared={} orphaned={} dequeued={}"
+                        + " dropped={} | left queued={} pending={} from={}",
+                jobs.size(), cleared, orphaned, dequeued, dropped, WORKLIST.size(), PENDING.size(),
+                caller);
     }
 
     /**

@@ -271,7 +271,7 @@ public final class CrowdedChunkGameTests {
                         step = Step.DONE;
                         return;
                     }
-                    CatchUpTestAccess.forget(level);
+                    CatchUpTestAccess.forget(helper, level);
                     RoundTripImages.stopWatching();
                     step = Step.PLACING;
                 }
@@ -331,7 +331,7 @@ public final class CrowdedChunkGameTests {
             }
             ChunkCatchUp.restoreBudget();
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             RoundTripImages.stopWatching();
 
             // Both counts, on every line, always. See the class comment. The microsecond

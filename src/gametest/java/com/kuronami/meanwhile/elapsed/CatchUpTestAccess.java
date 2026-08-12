@@ -1,7 +1,13 @@
 package com.kuronami.meanwhile.elapsed;
 
+import java.util.ArrayList;
+import java.util.List;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.AABB;
 
 /**
  * The measurement-only entry points of {@link ChunkCatchUp} and {@link ChunkClock}, reachable by a
@@ -45,11 +51,64 @@ public final class CatchUpTestAccess {
     }
 
     /**
-     * Drops every outstanding job and every debt the run has written down. See
-     * {@link ChunkCatchUp#forget}, including what it throws and why.
+     * Drops the outstanding jobs and the debts of this gate's own chunks. See
+     * {@link ChunkCatchUp#forget}.
+     *
+     * <p>With no chunks named this is the caller's whole arena, which is the widest set it owns.
+     * Name chunks to go narrower — the Nether half of {@code DimensionKeyGameTests} owns the one
+     * chunk position it forced there and no more.
+     *
+     * <h3>The refusal</h3>
+     * <p><b>A chunk outside the caller's arena is not the caller's to forget</b>, and asking for
+     * one throws. The reach of {@code forget} is the chunks it is handed: their debt is zeroed
+     * and their queued work dropped. Handed another gate's chunk mid-window, it destroys work
+     * that is then re-queued and paid off inside whatever window is open at the time, and
+     * neither gate fails — the shape this campaign found four times (GAP_LOG G156, G157, G158).
+     *
+     * <p>This replaces a refusal on "is any work in flight anywhere". That one called a state
+     * that is normal in production — a debt whose chunk has gone away, waiting for it to come
+     * back — an error, and killed 2 runs in 7 (G159, G160).
+     *
+     * @throws IllegalStateException if a named chunk is not in the caller's arena
      */
-    public static void forget(ServerLevel level) {
-        ChunkCatchUp.forget(level, caller());
+    public static void forget(GameTestHelper helper, ServerLevel level, ChunkPos... chunks) {
+        List<ChunkPos> arena = arenaChunks(helper);
+        List<ChunkPos> owned = chunks.length == 0 ? arena : List.of(chunks);
+        for (ChunkPos pos : owned) {
+            if (!arena.contains(pos)) {
+                throw new IllegalStateException("ChunkCatchUp.forget("
+                        + level.dimension().location() + ") was asked for chunk " + pos
+                        + ", which does not belong to " + caller() + ": its arena is " + arena
+                        + ". forget() zeroes a chunk's debt and drops its queued work, so a chunk"
+                        + " owned by another gate would have its window destroyed mid-flight and"
+                        + " neither gate would fail -- see GAP_LOG G156, G158 and G160. Forget"
+                        + " your own arena.");
+            }
+        }
+        ChunkCatchUp.forget(level, caller(), owned);
+    }
+
+    /**
+     * The chunks the framework force-loaded for this arena, from the bounding box
+     * {@code StructureUtils.forceLoadChunks} was handed, plus the structure block's own chunk in
+     * case it sits outside. A forced ticket propagates outwards, so an arena with one chunk still
+     * held stays loaded through its neighbour.
+     *
+     * <p>This is what a gate owns. GameTest places arenas wherever the run puts them, so a gate
+     * cannot name its chunks as constants; the bounds are the only source that moves with them.
+     */
+    public static List<ChunkPos> arenaChunks(GameTestHelper helper) {
+        AABB bounds = helper.getBounds();
+        BoundingBox box = BoundingBox.fromCorners(
+                BlockPos.containing(bounds.minX, bounds.minY, bounds.minZ),
+                BlockPos.containing(bounds.maxX - 1.0, bounds.maxY - 1.0, bounds.maxZ - 1.0));
+        List<ChunkPos> chunks = new ArrayList<>();
+        box.intersectingChunks().forEach(chunks::add);
+        ChunkPos structureBlock = new ChunkPos(helper.absolutePos(BlockPos.ZERO));
+        if (!chunks.contains(structureBlock)) {
+            chunks.add(structureBlock);
+        }
+        return chunks;
     }
 
     /**

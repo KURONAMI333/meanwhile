@@ -265,7 +265,7 @@ public final class CatchUpGuardGameTests {
         private void restore() {
             ChunkClock.setStampOffset(chunk, 0L);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             CatchUpGuard.reset();
             helper.setBlock(SUBJECT, Blocks.AIR);
         }
