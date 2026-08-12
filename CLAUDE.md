@@ -59,18 +59,19 @@ Acceptance is **62 required tests**, green 7/7 at idle and 10/10 under load.
 GameTest runs many tests in one server. `ChunkCatchUp`'s worklist, debts, mode, stamp offset and
 counters are **global**, so a gate that resets them is reaching into every other gate's measurement.
 
-- **`ChunkCatchUp.forget(level)` throws if any catch-up work is in flight.** It empties the worklist
-  and zeroes every chunk's debt in the dimension; called while another gate has jobs queued, it
-  destroys that work, which is then re-queued and paid off inside whichever window is open at the
-  time. Nothing fails when this happens — the offending gate stays green while other gates' frozen
-  values move (2 of 22 runs) and a required control goes red (1 of 36). That is G156, the tenth
-  instance in this campaign of a failure that does not look like one.
-- The check is on **the state that would be destroyed**, not on the name of the calling method. A
-  rule keyed to `arm()` versus `restore()` needs a list of which names count as teardown, and such a
-  list is one entry away from exempting the next offender. Call `ChunkCatchUp.workInFlight()` and
-  wait, as `DimensionKeyGameTests` does, rather than discovering the rule by crashing the run.
-- **The blast radius is still global** even when the call is legal: every `forget` measured clears
-  12–20 chunks' debt, not one (G157). Adding a gate that calls it is not free.
+- **`forget` reaches only the caller's own chunks.** `CatchUpTestAccess.forget(helper, level)` takes
+  the arena; name chunks to go narrower. It zeroes their debt and drops their queued work, and
+  touches nothing else, so destroying another gate's window is not something a gate can do (G160).
+- **It throws when handed a chunk outside the caller's arena**, naming the chunk and the arena. That
+  is the whole predicate. It used to refuse on "is any work in flight anywhere", which called a
+  state that is ordinary in production — a debt whose chunk has gone away, waiting for it to come
+  back — an error, and killed 2 idle runs in 7 (G159). **Sharpen this predicate; do not widen it.**
+  It found four cross-gate corruptions and one frozen value that was only stable because a gate was
+  wiping everyone else's queue (G156, G158).
+- **The arena is the authority on ownership**, from `CatchUpTestAccess.arenaChunks(helper)`. A gate
+  that cannot name its chunks is a report, not a reason to go global.
+- Arenas are 9 wide and chunks are 16, so two gates running at once **can share a chunk**. Ownership
+  is therefore not exclusive, and "cannot corrupt another gate" holds up to that overlap.
 
 ## The shipped configuration
 
