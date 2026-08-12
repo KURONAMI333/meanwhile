@@ -1,6 +1,7 @@
 package com.kuronami.meanwhile;
 
 import com.kuronami.meanwhile.catchup.CropCatchUp;
+import com.kuronami.meanwhile.elapsed.CatchUpTestAccess;
 import com.kuronami.meanwhile.harness.CatchUpSubject;
 import com.kuronami.meanwhile.harness.DifferentialHarness;
 import com.kuronami.meanwhile.harness.DifferentialHarness.Effort;
@@ -428,6 +429,23 @@ public class HarnessGameTests {
      * left the furnace detached from the game's dispatch, it never smelts again and the
      * output stops growing.
      *
+     * <p><b>The growth has to come from the game's ticking and nothing else.</b> The arena's own
+     * chunks arrive owing time — GameTest stands each arena on ground an earlier one used, and
+     * the chunk comes back tens of thousands of ticks stale — and that debt is paid off in
+     * instalments that can still be running when this window opens. An instalment that reaches
+     * this furnace grows the output because <i>the catch-up</i> jumped it, which is the one
+     * thing this test must not accept as evidence: the growth check would pass with the game's
+     * dispatch completely broken. That is not hypothetical. It was measured in 2 runs of 18,
+     * both reading 8.0 -> 16.0 against a usual 10.0, and reproduced deliberately by arming a
+     * stale stamp on this arena's own chunk, which reproduced the 16.0 exactly while all 62
+     * required tests still passed (GAP_LOG G163, {@code ucu_g163_ctrlA2_noforget.log}). So the
+     * arena's own debt is dropped before the window opens, and the same control with the drop
+     * in place cleared it and read 10.0 ({@code ucu_g163_ctrlB_forget.log}).
+     *
+     * <p>This is <b>not</b> the arm-time reset G155 caught moving readings. That one was global
+     * and destroyed every other gate's window; this one reaches the caller's own arena and
+     * throws if handed anything else.
+     *
      * <p>Runs with the scheduler off, in its own batch. What is being measured is a property
      * of the catch-up: that jumping a furnace forward leaves the game's own dispatch able to
      * carry it on. With the scheduler on, this furnace is one nothing can reach, so the
@@ -442,6 +460,10 @@ public class HarnessGameTests {
         FurnaceSubject subject = new FurnaceSubject();
         subject.setup(helper);
         subject.reset(helper);
+        // After the reset, so the furnace's state is this test's own, and before anything is
+        // measured: from here the arena owes nothing and has nothing queued, and it cannot be
+        // handed a fresh debt without being unloaded first.
+        CatchUpTestAccess.forget(helper, helper.getLevel());
 
         // Run it to the end of its load: unlit, nothing cooking, input gone.
         subject.catchUp(helper, FURNACE_TICKS, RandomSource.create(SEED_CATCH_UP));
