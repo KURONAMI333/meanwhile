@@ -303,7 +303,7 @@ public final class ScaffoldGameTests {
             ChunkCatchUp.setObserver(null);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
             ChunkCatchUp.restoreBudget();
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             helper.setBlock(SUBJECT, Blocks.AIR);
         }
     }

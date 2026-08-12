@@ -461,7 +461,7 @@ public final class FurnaceWideGameTests {
             }
             ChunkCatchUp.setObserver(null);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             RoundTripImages.stopWatching();
 
             if (failure != null) {

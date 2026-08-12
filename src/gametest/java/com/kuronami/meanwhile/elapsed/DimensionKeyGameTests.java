@@ -181,17 +181,18 @@ public final class DimensionKeyGameTests {
 
         private void armOverworld() {
             ServerLevel hell = requireNether();
-            // Wait for the level to go quiet before resetting anything global. This arm used to
-            // clear the worklist while other gates still had jobs in it — measured at 3 queued
-            // and 3 pending (GAP_LOG G157) — which threw that work away and had it re-queued and
-            // paid off inside the window this test was about to open. Nothing here failed when
-            // it happened; other gates moved. Staying in this step costs ticks off the RUN_TICKS
-            // budget, so a level that never goes quiet is reported rather than waited on for ever.
-            if (ChunkCatchUp.workInFlight()) {
-                return;
-            }
-            CatchUpTestAccess.forget(overworld);
-            CatchUpTestAccess.forget(hell);
+            // This arm used to clear the worklist while other gates still had jobs in it —
+            // measured at 3 queued and 3 pending (GAP_LOG G157) — which threw that work away and
+            // had it re-queued and paid off inside the window this test was about to open.
+            // Nothing here failed when it happened; other gates moved.
+            //
+            // It then waited here for the level to go quiet, and that wait could not clear: a
+            // debt whose chunk has gone away sits in PENDING unqueued until the chunk comes back,
+            // and a GameTest arena never comes back (G159, G160). The wait burnt RUN_TICKS until
+            // the test ran out of them. forget is now scoped to this gate's own chunks, so there
+            // is nothing to wait for — another gate's work is not reachable from here.
+            CatchUpTestAccess.forget(helper, overworld);
+            CatchUpTestAccess.forget(helper, hell, target);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT.restrictedTo(restrictTo));
             owedBeforeOverworld = ChunkCatchUp.owedFor(overworld, target);
             paidBeforeOverworld = ChunkCatchUp.paidFor(overworld, target);
@@ -315,9 +316,9 @@ public final class DimensionKeyGameTests {
             finished = true;
             ChunkClock.setStampOffset(target, 0L);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(overworld);
+            CatchUpTestAccess.forget(helper, overworld);
             if (nether != null) {
-                CatchUpTestAccess.forget(nether);
+                CatchUpTestAccess.forget(helper, nether, target);
                 nether.setChunkForced(target.x, target.z, false);
             }
             if (failure == null && windowNether < 0L) {

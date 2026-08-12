@@ -858,7 +858,7 @@ public final class UnloadedCatchUpGameTests {
             }
             ChunkCatchUp.restoreBudget();
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             RoundTripImages.stopWatching();
 
             for (int i = 0; i < slices.length; i++) {
@@ -1159,7 +1159,7 @@ public final class UnloadedCatchUpGameTests {
             ChunkCatchUp.restoreBudget();
             ChunkCatchUp.setCarryDebtAcrossReload(true);
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             RoundTripImages.stopWatching();
 
             if (failure != null) {
@@ -1335,7 +1335,7 @@ public final class UnloadedCatchUpGameTests {
                 Meanwhile.LOGGER.info("[repeat] {}", line);
             }
             ChunkCatchUp.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             RoundTripImages.stopWatching();
 
             if (failure != null) {
@@ -3133,23 +3133,12 @@ public final class UnloadedCatchUpGameTests {
     }
 
     /**
-     * The chunks the framework force-loaded for this arena, from the bounding box
-     * {@code StructureUtils.forceLoadChunks} was handed, plus the structure block's own chunk in
-     * case it sits outside. A forced ticket propagates outwards, so an arena with one chunk still
-     * held stays loaded through its neighbour.
+     * The chunks this arena covers. Kept here as the name half the suite already calls; the
+     * derivation lives on {@link CatchUpTestAccess}, which is also where a gate's ownership of a
+     * chunk is decided, so the two cannot drift apart.
      */
     static List<ChunkPos> arenaChunks(GameTestHelper helper) {
-        AABB bounds = helper.getBounds();
-        BoundingBox box = BoundingBox.fromCorners(
-                BlockPos.containing(bounds.minX, bounds.minY, bounds.minZ),
-                BlockPos.containing(bounds.maxX - 1.0, bounds.maxY - 1.0, bounds.maxZ - 1.0));
-        List<ChunkPos> chunks = new ArrayList<>();
-        box.intersectingChunks().forEach(chunks::add);
-        ChunkPos structureBlock = new ChunkPos(helper.absolutePos(BlockPos.ZERO));
-        if (!chunks.contains(structureBlock)) {
-            chunks.add(structureBlock);
-        }
-        return chunks;
+        return CatchUpTestAccess.arenaChunks(helper);
     }
 
     // ---- which negative control this run is ---------------------------------------------------------

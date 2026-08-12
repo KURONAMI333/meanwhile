@@ -316,7 +316,7 @@ public final class FurnaceDeferralGameTests {
             CompatibilityCoordinator.setDeferringFurnaces(deferralBefore);
             CatchUpTestAccess.setStampOffset(chunk, 0L);
             CatchUpTestAccess.setMode(ChunkCatchUp.Mode.PRODUCT);
-            CatchUpTestAccess.forget(level);
+            CatchUpTestAccess.forget(helper, level);
             helper.setBlock(FURNACE, Blocks.AIR);
         }
     }
