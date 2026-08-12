@@ -71,6 +71,27 @@ public class HarnessGameTests {
     /** Roughly two and a half real-time weeks of a furnace nobody visited. */
     private static final int LONG_WINDOW_TICKS = 1_200_000;
 
+    /**
+     * The most {@link #catchUpLeavesTheFurnaceTickableByTheGame} will accept as the work of
+     * 400 real ticks, which is what makes the growth it reads attributable to the game's own
+     * ticking rather than merely observed.
+     *
+     * <p>A furnace smelts one item per 200 ticks, so the game's dispatch can produce 2 across
+     * that window and no more. A catch-up instalment is {@code SLICE_TICKS} = 1000 ticks wide
+     * and, landing on the same furnace, produces far more in one go: the reading that exposed
+     * this was 8.0 -> 16.0. Between the two the assertion has to sit somewhere it can tell
+     * them apart, and the campaign's own logs say where. Of 601 recorded readings of this
+     * gate, 592 grew by 2, one by 3, four by 8 (the defect), and four by 0 (the gate failing
+     * as it should). The ceiling is above every legitimate reading ever taken and half of the
+     * smallest illegitimate one.
+     *
+     * <p><b>Without it the gate passes while proving nothing.</b> Its only assertion was that
+     * the output grew, and a catch-up jumping the furnace grows it with the game's dispatch
+     * completely broken (GAP_LOG G163, G164 ruling 42). Dropping the arena's own debt before
+     * the window stops that happening; this is what makes it say so when it happens anyway.
+     */
+    private static final double TICKED_GROWTH_CEILING = 4.0D;
+
     private static final long SEED_SIMULATED = 0x5EED_1111L;
     private static final long SEED_CATCH_UP = 0x5EED_2222L;
 
@@ -442,6 +463,11 @@ public class HarnessGameTests {
      * arena's own debt is dropped before the window opens, and the same control with the drop
      * in place cleared it and read 10.0 ({@code ucu_g163_ctrlB_forget.log}).
      *
+     * <p>The drop keeps it from happening; {@link #TICKED_GROWTH_CEILING} is what makes the
+     * gate say so if it happens anyway. Preventing the one mechanism that was found leaves the
+     * gate's judgement — output grew, therefore the game resumed — as vacuous as it was, and
+     * any other route to the same furnace would pass it just as silently.
+     *
      * <p>This is <b>not</b> the arm-time reset G155 caught moving readings. That one was global
      * and destroyed every other gate's window; this one reaches the caller's own arena and
      * throws if handed anything else.
@@ -484,6 +510,20 @@ public class HarnessGameTests {
                 helper.fail("the furnace smelted nothing in 400 real ticks after being caught up"
                         + " (output stayed at " + outputNow + "), so the catch-up left it"
                         + " detached from the game's own ticking");
+                return;
+            }
+            // Growth alone would be satisfied by a catch-up instalment reaching this furnace,
+            // which is not what is being measured and would read green with the game's dispatch
+            // broken. 400 ticks of smelting is 2 items; anything beyond the ceiling was put
+            // there by something other than the ticker, and this gate has no claim to make
+            // about that.
+            if (outputNow - outputAfterCatchUp > TICKED_GROWTH_CEILING) {
+                helper.fail("the furnace's output grew by "
+                        + (outputNow - outputAfterCatchUp) + " in 400 real ticks ("
+                        + outputAfterCatchUp + " -> " + outputNow + "), past the "
+                        + TICKED_GROWTH_CEILING + " that 400 ticks of smelting can produce, so"
+                        + " something other than the game's own ticking moved this furnace and"
+                        + " the growth above says nothing about whether the dispatch survived");
                 return;
             }
             helper.succeed();
