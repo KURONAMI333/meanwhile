@@ -1,6 +1,7 @@
 package com.kuronami.meanwhile.elapsed;
 
 import com.kuronami.meanwhile.Meanwhile;
+import com.kuronami.meanwhile.generic.FloorSurvey;
 import com.kuronami.meanwhile.generic.GenericCatchUp;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -115,6 +116,10 @@ public final class CorpusSweepGameTests {
         Meanwhile.LOGGER.info("[corpus] start | blocksWithBlockEntities={} gap={} powered={}"
                         + " mods={}",
                 candidates.size(), GAP, powered, loadedNamespaces(candidates));
+        // Fences the floor survey to this walk. The recorder is global and every other gate feeds
+        // it too, including arenas built to move a counter pathologically, and a floor sourced
+        // from one of those is not an observation about the shipped ecosystem.
+        FloorSurvey.mark("corpus");
 
         // The same schedule either way. A Create machine driven by a motor has no speed until
         // its network has formed, which needs real server ticks; but giving those ticks only to
@@ -143,6 +148,7 @@ public final class CorpusSweepGameTests {
                 .thenExecute(() -> {
                     level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
                     report(verdicts, cursor[0], candidates.size());
+                    FloorSurvey.report("corpus");
                     if (cursor[0] < candidates.size()) {
                         helper.fail("only " + cursor[0] + " of " + candidates.size()
                                 + " blocks were reached before the sequence ran out");
