@@ -335,6 +335,44 @@ tasks.register('verifyNoTestScaffoldingInJar') {
             return offences
         }
 
+        // The other way round, which the reading above cannot see. A member widened only in the
+        // measurement's file is widened in development too, so a product class calling it
+        // compiles, runs and passes every gate here — and throws IllegalAccessError in a real
+        // game, where only the shipped file is applied. This is the failure the split makes
+        // possible, so it is checked at the same time.
+        var unshippedAccessTransformer = file('src/gametest/accesstransformer.cfg')
+        var unshippedOffences = []
+        if (unshippedAccessTransformer.exists()) {
+            unshippedAccessTransformer.readLines().each { rawLine ->
+                var line = rawLine.replaceFirst('#.*', '').trim()
+                if (line.isEmpty()) {
+                    return
+                }
+                var parts = line.split('\\s+')
+                var named = parts.length >= 3 ? parts[2] : (parts.length == 2 ? parts[1] : null)
+                if (named == null) {
+                    return
+                }
+                var paren = named.indexOf('(')
+                if (paren >= 0) {
+                    named = named.substring(0, paren)
+                }
+                if (parts.length == 2) {
+                    named = named.substring(named.lastIndexOf('.') + 1)
+                }
+                if (!named.contains('*') && productNames.contains(named)) {
+                    unshippedOffences.add(line + '  (widened only in'
+                            + ' src/gametest/accesstransformer.cfg, which the jar does not carry,'
+                            + ' while ' + named + ' is named by a class under src/main/java)')
+                }
+            }
+        }
+        if (!unshippedOffences.isEmpty()) {
+            throw new GradleException('the product reaches a member only the measurement widens:'
+                    + System.lineSeparator()
+                    + unshippedOffences.collect { '  - ' + it }.join(System.lineSeparator()))
+        }
+
         var archives = archiveTasks.collect { it.archiveFile.get().asFile }
         // A gate that scans nothing reports OK. Say so instead.
         if (archives.isEmpty()) {
