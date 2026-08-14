@@ -89,6 +89,37 @@ public final class CatchUpTestAccess {
     }
 
     /**
+     * Drops what the catch-up holds in memory about this gate's own chunks and leaves what the
+     * chunks carry alone. See {@link ChunkCatchUp#dropInFlightState}.
+     *
+     * <p>The reach and the refusal are {@link #forget}'s, for the same reasons. This one is
+     * narrower in what it destroys, not in whose chunks it may be pointed at.
+     *
+     * @throws IllegalStateException if a named chunk is not in the caller's arena
+     */
+    public static void dropInFlightState(GameTestHelper helper, ServerLevel level,
+                                         ChunkPos... chunks) {
+        List<ChunkPos> arena = arenaChunks(helper);
+        List<ChunkPos> owned = chunks.length == 0 ? arena : List.of(chunks);
+        for (ChunkPos pos : owned) {
+            if (!arena.contains(pos)) {
+                throw new IllegalStateException("ChunkCatchUp.dropInFlightState("
+                        + level.dimension().location() + ") was asked for chunk " + pos
+                        + ", which does not belong to " + caller() + ": its arena is " + arena
+                        + ". Dropping another gate's queued work re-queues it into whatever"
+                        + " window is open at the time and neither gate fails -- see GAP_LOG"
+                        + " G156, G158 and G160.");
+            }
+        }
+        ChunkCatchUp.dropInFlightState(level, caller(), owned);
+    }
+
+    /** See {@link ChunkCatchUp#paidUpToFor}. */
+    public static long paidUpToFor(ServerLevel level, ChunkPos pos) {
+        return ChunkCatchUp.paidUpToFor(level, pos);
+    }
+
+    /**
      * The chunks the framework force-loaded for this arena, from the bounding box
      * {@code StructureUtils.forceLoadChunks} was handed, plus the structure block's own chunk in
      * case it sits outside. A forced ticket propagates outwards, so an arena with one chunk still

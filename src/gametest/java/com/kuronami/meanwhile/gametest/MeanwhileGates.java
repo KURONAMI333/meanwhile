@@ -18,6 +18,7 @@ import com.kuronami.meanwhile.elapsed.CrowdedChunkGameTests;
 import com.kuronami.meanwhile.elapsed.DimensionKeyGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceSpanGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceWideGameTests;
+import com.kuronami.meanwhile.elapsed.RestartMidInstalmentGameTests;
 import com.kuronami.meanwhile.elapsed.ScaffoldGameTests;
 import com.kuronami.meanwhile.elapsed.UnloadedCatchUpGameTests;
 import com.kuronami.meanwhile.generic.FloorSurvey;
@@ -82,6 +83,7 @@ public class MeanwhileGates {
             event.register(CrowdedChunkGameTests.class);
             event.register(FurnaceDeferralGameTests.class);
             event.register(JumpMarginGameTests.class);
+            event.register(RestartMidInstalmentGameTests.class);
         });
         // Where falling counters were seen to stop (G168 ruling 46, answered in G169). Reads the
         // table GenericCatchUp writes and asserts nothing, so it changes no verdict. The recorder
@@ -92,7 +94,7 @@ public class MeanwhileGates {
 
         Meanwhile.LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
                 + " wide, corpus sweep, guard, scaffold, peak corroboration, dimension key,"
-                + " crowded chunk, jump margin");
+                + " crowded chunk, jump margin, restart mid instalment");
 
         // The unloaded catch-up gate is measured against a Create machine, so it exists only
         // when Create does.
