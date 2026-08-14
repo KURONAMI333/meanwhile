@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # The acceptance streaks for G167, with a distinct log name per run so that a failure keeps its
 # log (_run_gate.sh truncates when a name is reused; two failure logs were lost that way, G157).
-# Usage: _g167_streak.sh idle|load <count>
+# Usage: _g167_streak.sh idle|load <count> [tag]
+# The tag names the runs, so a second streak on a changed commit keeps the first one's logs.
 set -u
 cd "$(dirname "$0")" || exit 1
 KIND="$1"
 COUNT="$2"
-SUMMARY="_g167_${KIND}_summary.txt"
+TAG="${3:-g167}"
+SUMMARY="_${TAG}_${KIND}_summary.txt"
 : > "$SUMMARY"
 
 for i in $(seq 1 "$COUNT"); do
-  NAME="g167_${KIND}${i}"
+  NAME="${TAG}_${KIND}${i}"
   if [ "$KIND" = "load" ]; then
     OUT="$(./_run_gate_loaded.sh "$NAME" 2>&1)"
   else
