@@ -395,6 +395,18 @@ public final class ChunkCatchUp {
     private static volatile boolean drainFailureReported;
 
     /**
+     * Ticks a machine was dispatched and did not get, because its ticker threw.
+     *
+     * <p>The instalment takes its slice off the chunk's debt whatever the walk found, and the
+     * debt is one number for the whole chunk: a machine that threw cannot be credited without
+     * over-paying every other machine standing in the same chunk, which is the direction this
+     * mod is not allowed to be wrong in. So the ticks are genuinely lost, and the only thing
+     * that can be done about it here is to stop losing them silently — a per-block-entity debt
+     * is what would let them be kept, and that is a different structure from this one (G167).
+     */
+    private static volatile long ticksLostToExceptions;
+
+    /**
      * Cumulative, per chunk, so that paying the same absence twice can be asserted against.
      *
      * <p>Kept only while {@link #recordRunningTotals} is on, which nothing in the product turns
@@ -1021,6 +1033,16 @@ public final class ChunkCatchUp {
                         BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock())
                                 .toString(),
                         thrown);
+                // The slice comes off the chunk's debt either way, so this machine is short by
+                // what it was dispatched and will never be offered it again. Counted and said
+                // out loud; see ticksLostToExceptions for why it cannot simply be kept.
+                ticksLostToExceptions += Math.max(dispatched, 0);
+                Meanwhile.LOGGER.warn("[catchup] window lost | chunk={} dim={} pos={} ticks={}"
+                                + " | the machine threw and the chunk's debt still paid for it"
+                                + " | lostTotal={}",
+                        chunk.getPos(), level.dimension().location(),
+                        pos.toShortString(),
+                        dispatched, ticksLostToExceptions);
                 attempt = new Attempt(pos, block, type, ticker, dispatched, true,
                         (isolated ? "threw and was isolated: " : "threw: ")
                                 + thrown.getClass().getName(),
@@ -1348,6 +1370,11 @@ public final class ChunkCatchUp {
     /** Slices abandoned by the drain's backstop. Zero is the only figure a run should show. */
     public static int drainFailures() {
         return drainFailures;
+    }
+
+    /** Ticks dispatched to a machine whose ticker threw, which its chunk paid for regardless. */
+    public static long ticksLostToExceptions() {
+        return ticksLostToExceptions;
     }
 
     /** The longest single drain, in microseconds. This is the number a stall would show up in. */
