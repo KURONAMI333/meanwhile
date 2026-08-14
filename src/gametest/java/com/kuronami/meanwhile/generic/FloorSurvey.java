@@ -52,10 +52,20 @@ public final class FloorSurvey {
     private FloorSurvey() {
     }
 
-    /** Reports the whole run's table when the server goes down. */
+    /**
+     * Asks {@link GenericCatchUp} to write the table down, and reports the whole run's at
+     * shutdown.
+     *
+     * <p>The recorder is off in the product and this is what turns it on, so nothing outside a
+     * run pays for a table only a run reads. Called from {@code MeanwhileGates}, which is
+     * constructed before any gate does anything, for the same reason the per-chunk running totals
+     * are asked for there: a survey that had to remember to switch its own recorder on would
+     * report an empty table and call it an answer.
+     */
     public static void install() {
+        GenericCatchUp.setRecordFallingFloors(true);
         NeoForge.EVENT_BUS.addListener((ServerStoppedEvent event) -> report("run"));
-        Meanwhile.LOGGER.info("[floors] survey installed | reported at server stop");
+        Meanwhile.LOGGER.info("[floors] survey installed | recording on | reported at server stop");
     }
 
     /** Opens a scope: what is already in the table stops counting towards it. */

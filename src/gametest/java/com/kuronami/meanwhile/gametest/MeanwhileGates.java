@@ -81,10 +81,11 @@ public class MeanwhileGates {
             event.register(CrowdedChunkGameTests.class);
             event.register(FurnaceDeferralGameTests.class);
         });
-        // Where falling counters were seen to stop, for the ruling that decides whether the
-        // floor has to be learned the way the peak is (G168 ruling 46). Reads the table
-        // GenericCatchUp writes and asserts nothing, so it changes no verdict; it lives here
-        // rather than in the product because only a run has anything to report.
+        // Where falling counters were seen to stop (G168 ruling 46, answered in G169). Reads the
+        // table GenericCatchUp writes and asserts nothing, so it changes no verdict. The recorder
+        // that fills the table is off in the product and this call is what switches it on, on the
+        // same grounds as the running totals above: one entry per type and tag path, evicted by
+        // nothing, read by nothing the product ships (ruling 50).
         FloorSurvey.install();
 
         Meanwhile.LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
