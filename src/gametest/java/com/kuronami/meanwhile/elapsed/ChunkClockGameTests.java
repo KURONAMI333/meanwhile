@@ -4,6 +4,7 @@ import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.UnloadWatch;
 import com.kuronami.meanwhile.chunkprobe.ChunkEventProbe;
 import com.kuronami.meanwhile.chunkprobe.ChunkTickProbe;
+import com.kuronami.meanwhile.guard.CatchUpGuard;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.core.BlockPos;
@@ -114,6 +115,11 @@ public final class ChunkClockGameTests {
                         level.setChunkForced(pos.x, pos.z, true);
                     }
                     ChunkTickProbe.stopWatching();
+                    // The markers above are this test's own exceptions and isolations, and the
+                    // guard's totals are global. Put them back where the batch found them, so
+                    // the gate that reads those totals is measuring its own subject and not
+                    // this one's (CLAUDE.md: gates must not corrupt other gates).
+                    CatchUpGuard.reset();
                     Meanwhile.LOGGER.info("[clock] restored | forced={} runningTicks={}",
                             forcedChunks(level), ChunkTickProbe.runningTicks());
 
@@ -145,6 +151,9 @@ public final class ChunkClockGameTests {
 
         @Nullable
         private Long seenBefore;
+        /** A position in the target chunk the guard has been told to stop catching up. */
+        @Nullable
+        private BlockPos marker;
         private long releasedAt = -1L;
         private long unloadAt = -1L;
         private long askedAt = -1L;
@@ -184,6 +193,22 @@ public final class ChunkClockGameTests {
                 fail("cycle " + index + ": nothing was written onto chunk " + target
                         + " in " + SETTLE_TICKS + " ticks of running, so there is no stored time"
                         + " for the round trip to preserve");
+                return;
+            }
+            // A machine in this chunk that the guard has dropped from catch-up. The chunk is
+            // about to really go, which is the one thing that removes an isolation, and this is
+            // the only place in the suite where that happens: the guard's own gate asserts that
+            // forgetting a chunk clears one, and cannot show that a chunk going away is what
+            // does the forgetting. No block entity is needed — the guard counts positions.
+            marker = new BlockPos(target.getMiddleBlockX(), 64, target.getMiddleBlockZ());
+            for (int i = 0; i < CatchUpGuard.threshold(); i++) {
+                CatchUpGuard.record(level.dimension(), marker, "clock gate marker",
+                        new IllegalStateException("clock gate marker"));
+            }
+            if (!CatchUpGuard.isIsolated(level.dimension(), marker)) {
+                fail("cycle " + index + ": the marker at " + marker.toShortString() + " was not"
+                        + " isolated after " + CatchUpGuard.threshold() + " exceptions, so the"
+                        + " round trip has nothing to clear");
                 return;
             }
             for (ChunkPos pos : arena) {
@@ -281,6 +306,13 @@ public final class ChunkClockGameTests {
                         + (gap.lastRunning() + 1) + " to " + (gap.nextRunning() - 1)
                         + ", which is not the absence the game posted: unload at " + unloadAt
                         + ", load at " + loadAt);
+                return;
+            }
+            if (marker != null && CatchUpGuard.isIsolated(level.dimension(), marker)) {
+                fail("cycle " + index + ": chunk " + target + " unloaded at " + unloadAt
+                        + " and came back, and the machine isolated in it at "
+                        + marker.toShortString() + " is still isolated, so nothing on the"
+                        + " unload path reaches the guard");
                 return;
             }
             if (result.elapsed() != gap.missed()) {
