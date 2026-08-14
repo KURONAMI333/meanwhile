@@ -67,7 +67,15 @@ neoForge {
         minecraftVersion = project.parchment_minecraft_version
     }
 
-    accessTransformers = project.files('src/main/resources/META-INF/accesstransformer.cfg')
+    // Two files, and the split is the point. The first ships inside the jar and widens vanilla
+    // for everything that loads the mod; the second is applied to the Minecraft artifact this
+    // project compiles and runs against, and is packed by nothing. A member only the
+    // measurement calls goes in the second one. Both are applied here, so the compiler cannot
+    // tell the two apart — verifyNoTestScaffoldingInJar reads the shipped file and is what
+    // enforces it.
+    accessTransformers = project.files(
+            'src/main/resources/META-INF/accesstransformer.cfg',
+            'src/gametest/accesstransformer.cfg')
 
     // Default run configurations.
     // These can be tweaked, removed, or duplicated as needed.
@@ -206,18 +214,21 @@ tasks.named('check') {
 // That the jar carries none of the measurement. Nine thousand lines of it and fifteen GameTest
 // classes are one `git mv` away from being shipped again, and a shipped GameTest class is not
 // merely dead weight: on 26.x it lands in a real registry and the configuration-phase sync a
-// client performs on join fails on it. Five independent readings, because a class can escape
-// any one of them — a support class carries no `Test` in its name, and a structure template is
-// not a class at all.
+// client performs on join fails on it. Six independent readings, because a class can escape
+// any one of them — a support class carries no `Test` in its name, a structure template is
+// not a class at all, and an access transformer is not even code.
 tasks.register('verifyNoTestScaffoldingInJar') {
     group = 'verification'
-    description = 'Fails if the shipped jar contains GameTest scaffolding (classes, framework references or test structures).'
+    description = 'Fails if the shipped jar contains GameTest scaffolding (classes, framework references or test structures) or widens a vanilla member no shipped class names.'
 
     var archiveTasks = tasks.matching { it.name == 'jar' || it.name == 'remapJar' }
     dependsOn(archiveTasks)
     inputs.files(project.provider { archiveTasks.collect { it.archiveFile.get().asFile } })
     var stamp = layout.buildDirectory.file("reports/no-test-scaffolding/${project.name}.txt")
     outputs.file(stamp)
+
+    // Where the product's own callers are looked for, for the access transformer reading below.
+    inputs.dir('src/main/java')
 
     doLast {
         // References that appear in a class file's constant pool as plain UTF-8.
@@ -228,6 +239,63 @@ tasks.register('verifyNoTestScaffoldingInJar') {
                 'GameTestHelper',
                 'TEST_INSTANCE'
         ]
+        // Every identifier the product's own sources contain. An access transformer entry names
+        // a member; if no shipped class so much as writes that name, nothing in the jar can be
+        // calling it, and widening it for every mod on the server buys the product nothing.
+        // Coarse on purpose — a name that appears in a comment counts — because the reading has
+        // to be wrong in the direction of letting a real caller through, not of failing a build
+        // over a call it could not see.
+        var productNames = new HashSet<String>()
+        var identifiers = java.util.regex.Pattern.compile('[A-Za-z_$][A-Za-z0-9_$]*')
+        fileTree('src/main/java').matching { include '**/*.java' }.each { source ->
+            var matcher = identifiers.matcher(source.getText('UTF-8'))
+            while (matcher.find()) {
+                productNames.add(matcher.group())
+            }
+        }
+        if (productNames.isEmpty()) {
+            throw new GradleException('verifyNoTestScaffoldingInJar read no product sources;'
+                    + ' it cannot tell whether a shipped access transformer entry has a caller.')
+        }
+
+        // A shipped access transformer widens vanilla for the whole server, for as long as the
+        // mod is loaded, and it is not code — the five readings below all look at classes and
+        // paths and would carry a test-only widening into the jar without a word. What only the
+        // measurement needs belongs in src/gametest/accesstransformer.cfg, which is packed by
+        // nothing; the dev environment applies both files to the same Minecraft artifact, so the
+        // compiler cannot tell them apart and this is the only thing that can.
+        var readAccessTransformer = { String text ->
+            var offences = []
+            text.readLines().each { rawLine ->
+                var line = rawLine.replaceFirst('#.*', '').trim()
+                if (line.isEmpty()) {
+                    return
+                }
+                var parts = line.split('\\s+')
+                // "<access> <class> <member><descriptor>", or "<access> <class>" for a class.
+                var named = parts.length >= 3 ? parts[2] : (parts.length == 2 ? parts[1] : null)
+                if (named == null) {
+                    offences.add(line + '  (access transformer line that cannot be read)')
+                    return
+                }
+                var paren = named.indexOf('(')
+                if (paren >= 0) {
+                    named = named.substring(0, paren)
+                }
+                if (parts.length == 2) {
+                    named = named.substring(named.lastIndexOf('.') + 1)
+                }
+                if (named.contains('*')) {
+                    offences.add(line + '  (shipped access transformer widens by wildcard, so no'
+                            + ' shipped caller can be named for it)')
+                } else if (!productNames.contains(named)) {
+                    offences.add(line + '  (shipped access transformer widens ' + named
+                            + ', which no class under src/main/java names)')
+                }
+            }
+            return offences
+        }
+
         var testClassPattern = java.util.regex.Pattern.compile('.*/[A-Za-z0-9_$]*Tests?([$][^/]*)?[.]class')
         var testDirPattern = java.util.regex.Pattern.compile('(?i)(.*/)?tests?/.*')
         var structurePattern = java.util.regex.Pattern.compile('data/[^/]+/structure/.*')
@@ -249,6 +317,11 @@ tasks.register('verifyNoTestScaffoldingInJar') {
                         // data/<ns>/structure/ is where GameTest keeps its templates
                         // (worldgen structures live under data/<ns>/worldgen/structure/).
                         offences.add(name + '  (gametest structure template)')
+                    } else if (name == 'META-INF/accesstransformer.cfg') {
+                        var text = zip.getInputStream(entry).withCloseable {
+                            new String(it.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                        }
+                        offences.addAll(readAccessTransformer(text))
                     } else if (name.endsWith('.class')) {
                         var bytes = zip.getInputStream(entry).withCloseable { it.readAllBytes() }
                         var text = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
