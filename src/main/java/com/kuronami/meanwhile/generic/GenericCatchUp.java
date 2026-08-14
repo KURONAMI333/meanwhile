@@ -286,6 +286,24 @@ public final class GenericCatchUp {
      */
     private static final Map<String, Falling> FALLING = new ConcurrentHashMap<>();
 
+    /**
+     * Whether falls are written down at all. Off unless a run asks for them.
+     *
+     * <p>Same shape and the same reason as {@code ChunkCatchUp.setRecordRunningTotals}: one entry
+     * per type and tag path that nothing evicts, and no reader in the product (GAP_LOG G142,
+     * ruling 50). A server carrying many kinds of machine would accumulate one entry for every
+     * counter any of them ever moved downwards, and nothing would ever ask what they say.
+     *
+     * <p>The flag is read before the entry is created, not merely before it is incremented, or
+     * the table would grow to its full size with every count in it left at zero.
+     */
+    private static volatile boolean recordFallingFloors;
+
+    /** Measurement only: write down where falling counters stop, for the rest of this run. */
+    static void setRecordFallingFloors(boolean record) {
+        recordFallingFloors = record;
+    }
+
     /** How many distinct trough values are kept for one counter. */
     private static final int DISTINCT_TROUGHS_KEPT = 8;
 
@@ -338,6 +356,9 @@ public final class GenericCatchUp {
 
     /** A counter went down. Counted whether or not it is ever seen coming back up. */
     private static void countFall(String typeKey, String path) {
+        if (!recordFallingFloors) {
+            return;
+        }
         Falling falling = fallingFor(typeKey, path);
         synchronized (falling) {
             falling.falls++;
@@ -356,6 +377,9 @@ public final class GenericCatchUp {
      */
     private static void recordTrough(String typeKey, String path, long low, long fall, long to,
                                      BlockPos pos) {
+        if (!recordFallingFloors) {
+            return;
+        }
         Falling falling = fallingFor(typeKey, path);
         int seen;
         synchronized (falling) {
