@@ -20,6 +20,7 @@ import com.kuronami.meanwhile.elapsed.FurnaceSpanGameTests;
 import com.kuronami.meanwhile.elapsed.FurnaceWideGameTests;
 import com.kuronami.meanwhile.elapsed.ScaffoldGameTests;
 import com.kuronami.meanwhile.elapsed.UnloadedCatchUpGameTests;
+import com.kuronami.meanwhile.generic.FloorSurvey;
 import com.kuronami.meanwhile.generic.GenericCatchUpGameTests;
 import com.kuronami.meanwhile.generic.PeakCorroborationGameTests;
 import net.neoforged.bus.api.IEventBus;
@@ -80,6 +81,12 @@ public class MeanwhileGates {
             event.register(CrowdedChunkGameTests.class);
             event.register(FurnaceDeferralGameTests.class);
         });
+        // Where falling counters were seen to stop, for the ruling that decides whether the
+        // floor has to be learned the way the peak is (G168 ruling 46). Reads the table
+        // GenericCatchUp writes and asserts nothing, so it changes no verdict; it lives here
+        // rather than in the product because only a run has anything to report.
+        FloorSurvey.install();
+
         Meanwhile.LOGGER.info("[catchup] registering the vanilla catch-up gates: furnace span, furnace"
                 + " wide, corpus sweep, guard, scaffold, peak corroboration, dimension key,"
                 + " crowded chunk");
