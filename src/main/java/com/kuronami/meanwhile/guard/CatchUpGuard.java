@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 
 /**
@@ -135,6 +136,53 @@ public final class CatchUpGuard {
             isolations++;
         }
         return isolate;
+    }
+
+    /**
+     * Drop what is remembered about one chunk, because the chunk has gone.
+     *
+     * <p>Both halves are keyed on a position, and nothing the game does removes either of them:
+     * an isolation made in a chunk that then unloads stays in this set for the lifetime of the
+     * process, so a long exploration grows it without bound. Called from the same forget path
+     * {@link com.kuronami.meanwhile.elapsed.ChunkClock} uses to tell the catch-up a chunk is
+     * gone, which is handed the position and nothing else.
+     *
+     * <p>Nothing is lost by dropping it. An isolation only ever decides whether a loaded chunk's
+     * block entity is offered a window, so one belonging to a chunk that is not there decides
+     * nothing until the chunk returns — and a machine that is genuinely broken reaches the
+     * threshold again on the first few windows after it does, which is the second chance this
+     * guard already says it errs towards.
+     */
+    public static void forgetChunk(ResourceKey<Level> dimension, long chunkPos) {
+        if (HITS.isEmpty() && ISOLATED.isEmpty()) {
+            return;
+        }
+        ChunkPos pos = new ChunkPos(chunkPos);
+        HITS.keySet().removeIf(source -> inChunk(source, dimension, pos));
+        ISOLATED.removeIf(source -> inChunk(source, dimension, pos));
+    }
+
+    /** The same, for every chunk of one level, because the level has gone. */
+    public static void forgetLevel(ResourceKey<Level> dimension) {
+        HITS.keySet().removeIf(source -> source.dimension().equals(dimension));
+        ISOLATED.removeIf(source -> source.dimension().equals(dimension));
+    }
+
+    /**
+     * Everything remembered about where machines are, dropped, because the server has stopped.
+     *
+     * <p>This is static state and an integrated server is started and stopped inside one
+     * process: without this, a position isolated in one world decides whether a machine at the
+     * same coordinates of the next world is caught up. The totals are not cleared — they are a
+     * count of what this process has seen, and a measurement reading them is entitled to that.
+     */
+    public static void forgetAll() {
+        HITS.clear();
+        ISOLATED.clear();
+    }
+
+    private static boolean inChunk(Source source, ResourceKey<Level> dimension, ChunkPos pos) {
+        return source.dimension().equals(dimension) && new ChunkPos(source.pos()).equals(pos);
     }
 
     private static void prune(Deque<Long> hits, long now) {
