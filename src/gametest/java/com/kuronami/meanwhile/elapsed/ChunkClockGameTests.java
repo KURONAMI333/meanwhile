@@ -3,6 +3,7 @@ package com.kuronami.meanwhile.elapsed;
 import com.kuronami.meanwhile.Meanwhile;
 import com.kuronami.meanwhile.UnloadWatch;
 import com.kuronami.meanwhile.chunkprobe.ChunkEventProbe;
+import com.kuronami.meanwhile.chunkprobe.ChunkTickProbe;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.core.BlockPos;
@@ -32,12 +33,21 @@ import org.jetbrains.annotations.Nullable;
  * <li>the time the chunk carried back is <em>the same value</em> the test read off it before it
  *     went, so the round trip through NBT preserved it rather than the attachment quietly
  *     falling back to a default;</li>
- * <li>the elapsed count equals current tick minus that value, exactly.</li>
+ * <li>the elapsed count equals the number of ticks the chunk was counted, from outside, as not
+ *     running — not "current tick minus the stored time", which is the clock's own arithmetic
+ *     and cannot disagree with itself.</li>
  * </ul>
  *
  * <p>The witness for "it really unloaded" is {@link ChunkEventProbe}, which is a separate
  * recorder of the game's own events and is not part of what is being measured. Asking the clock
  * whether the clock saw an unload would prove nothing.
+ *
+ * <p>The witness for <em>how long</em> it was gone is {@link ChunkTickProbe}, on the same terms:
+ * it counts the ticks on which the game would not have run anything in the chunk, from the
+ * chunk source and the level's own ticking condition, and never reads the time stored on the
+ * chunk. The two probes are checked against each other — the run of missed ticks has to be the
+ * one the game posted its unload and its load inside of — so a count of an absence that is not
+ * the absence the events describe cannot be what the clock is compared against.
  *
  * <h3>Why the arena holds no block entity</h3>
  * <p>The loaded-side scheduler is still live in this build, and a deferred block entity inside a
@@ -77,6 +87,7 @@ public final class ChunkClockGameTests {
         if (!probeInstalled) {
             probeInstalled = true;
             ChunkEventProbe.install();
+            ChunkTickProbe.install();
         }
         Meanwhile.LOGGER.info("[clock] batch begin | forced={}", forcedChunks(level));
     }
@@ -88,6 +99,7 @@ public final class ChunkClockGameTests {
         ChunkPos target = new ChunkPos(helper.absolutePos(new BlockPos(2, 1, 2)));
         List<ChunkPos> arena = arenaChunks(helper);
         Cycle cycle = new Cycle(level, target, arena);
+        ChunkTickProbe.watch(level, target);
 
         Meanwhile.LOGGER.info("[clock] arena | structureBlock={} target={} chunks={} forced={}",
                 helper.absolutePos(BlockPos.ZERO).toShortString(), target, arena,
@@ -101,7 +113,9 @@ public final class ChunkClockGameTests {
                     for (ChunkPos pos : arena) {
                         level.setChunkForced(pos.x, pos.z, true);
                     }
-                    Meanwhile.LOGGER.info("[clock] restored | forced={}", forcedChunks(level));
+                    ChunkTickProbe.stopWatching();
+                    Meanwhile.LOGGER.info("[clock] restored | forced={} runningTicks={}",
+                            forcedChunks(level), ChunkTickProbe.runningTicks());
 
                     for (String line : cycle.report()) {
                         Meanwhile.LOGGER.info("[clock] RESULT {}", line);
@@ -222,6 +236,7 @@ public final class ChunkClockGameTests {
             long before = seenBefore;
             Long atUnload = ChunkClock.stampAtUnload(level, target);
             long loadAt = ChunkEventProbe.firstSightingAfter(target, false, askedAt);
+            ChunkTickProbe.Gap gap = ChunkTickProbe.gapEndingAt(result.at());
             report.add("cycle=" + index + " wait=" + WAITS[index]
                     + " releasedAt=" + releasedAt + " unloadAt=" + unloadAt
                     + " askedAt=" + askedAt + " loadAt=" + loadAt
@@ -229,7 +244,7 @@ public final class ChunkClockGameTests {
                     + " lastSeen=" + result.lastSeen() + " at=" + result.at()
                     + " elapsed=" + result.elapsed()
                     + " | priorPresent=" + result.priorPresent()
-                    + " gone=" + (result.at() - unloadAt)
+                    + " observed=" + (gap == null ? "<none>" : gap)
                     + " noticedAfter=" + (now - result.at()));
 
             if (loadAt < 0) {
@@ -247,11 +262,32 @@ public final class ChunkClockGameTests {
                         + " and came back carrying " + result.lastSeen());
                 return;
             }
-            if (result.elapsed() != result.at() - before) {
-                fail("cycle " + index + ": chunk " + target + " was reconciled at " + result.at()
-                        + " against a stored " + before + ", which is "
-                        + (result.at() - before) + " ticks, but the clock said "
-                        + result.elapsed());
+            // What the chunk actually missed, counted from outside the clock: the run of ticks
+            // on which the game would not have ticked anything in it. Compared against the
+            // clock's number rather than against the clock's own subtraction, which is the same
+            // arithmetic twice and cannot fail.
+            if (gap == null) {
+                fail("cycle " + index + ": the clock reconciled chunk " + target + " at "
+                        + result.at() + ", but the chunk was not seen starting to run again on"
+                        + " that tick, so there is nothing to compare its count against"
+                        + " (gaps seen: " + ChunkTickProbe.gaps() + ")");
+                return;
+            }
+            // The counted absence has to be the absence the game's own events describe, or the
+            // count is of some other interruption that happened to end on the same tick.
+            if (unloadAt <= gap.lastRunning() || unloadAt >= gap.nextRunning()
+                    || loadAt <= gap.lastRunning() || loadAt >= gap.nextRunning()) {
+                fail("cycle " + index + ": chunk " + target + " was counted as not running from "
+                        + (gap.lastRunning() + 1) + " to " + (gap.nextRunning() - 1)
+                        + ", which is not the absence the game posted: unload at " + unloadAt
+                        + ", load at " + loadAt);
+                return;
+            }
+            if (result.elapsed() != gap.missed()) {
+                fail("cycle " + index + ": chunk " + target + " ran last at " + gap.lastRunning()
+                        + " and ran again at " + gap.nextRunning() + ", so it missed "
+                        + gap.missed() + " ticks, but the clock said " + result.elapsed()
+                        + " (lastSeen=" + result.lastSeen() + " at=" + result.at() + ")");
                 return;
             }
 

@@ -19,8 +19,9 @@ import org.jetbrains.annotations.Nullable;
  *
  * <p>Two halves. While a chunk is running, the game time of every tick it runs is written onto
  * the chunk, so that the last one survives into the saved file. When a chunk comes back, the
- * first tick it is running again subtracts that stored time from the current one, and the
- * difference is the number of ticks the chunk was not there for.
+ * first tick it is running again counts the ticks lying between that stored time and itself:
+ * both of those are ticks the chunk ran, so what it was not there for is what is strictly
+ * between them.
  *
  * <p>Nothing is caught up here. This produces the number and stops.
  *
@@ -61,7 +62,8 @@ public final class ChunkClock {
      * @param priorPresent whether the chunk carried a stored time at all
      * @param lastSeen     the stored time, meaningless when {@code priorPresent} is false
      * @param at           the game time of the tick this was worked out on
-     * @param elapsed      {@code at - lastSeen}, or 0 when there was nothing stored
+     * @param elapsed      how many ticks the chunk missed between those two, which is
+     *                     {@code at - lastSeen - 1}; 0 when there was nothing stored
      */
     public record Reconciliation(long chunkPos, boolean priorPresent, long lastSeen, long at,
                                  long elapsed) {
@@ -216,7 +218,19 @@ public final class ChunkClock {
         Long prior = chunk.chunk.getExistingDataOrNull(ChunkClockAttachments.LAST_SEEN_GAME_TIME);
         boolean priorPresent = prior != null;
         long lastSeen = priorPresent ? prior : 0L;
-        long elapsed = priorPresent ? now - lastSeen : 0L;
+        // Both ends belong to the game, not to the window. The stored time is a tick the chunk
+        // ran — it was written after that tick's block entities had been ticked — and this tick
+        // is one the chunk is running too, since the sweep is on LevelTickEvent.Post and the
+        // level ticked its block entities earlier in it. What the chunk missed is therefore what
+        // lies strictly between the two, and the difference of the two ends counts one of them
+        // twice: a chunk gone from 24880 to 24921 and running again at 24922 against a stored
+        // 24879 missed 42 ticks, and the subtraction says 43 (G167).
+        //
+        // The direction matters more than the size. One tick too many is a machine carried
+        // further than it would have got, which is the one thing this mod is not allowed to do;
+        // the same error the other way is a machine that is one tick behind and catches up on
+        // the next window.
+        long elapsed = priorPresent ? now - lastSeen - 1L : 0L;
 
         RECONCILED.computeIfAbsent(level.dimension(), ignored -> new ConcurrentHashMap<>())
                 .put(key, new Reconciliation(key, priorPresent, lastSeen, now, elapsed));
