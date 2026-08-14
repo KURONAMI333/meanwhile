@@ -271,6 +271,111 @@ public final class GenericCatchUp {
         return counts == null ? null : authorisingIn(counts);
     }
 
+    // ---- where falling counters were seen to stop: observation only ------------------------
+
+    /**
+     * What falling counters have been seen doing, by block entity type and tag path.
+     *
+     * <p>Nothing reads this to decide anything, and {@link #span} is unchanged by its existence.
+     * A falling counter is still sent towards zero, which is the one number this class assumes
+     * rather than watches. Whether that assumption holds is a question about a population, so
+     * this writes down what the population does and answers nothing itself.
+     *
+     * <p>A trough is only seen when the fall and the rise that ends it both happen inside one
+     * window, which is the same reach the peak table has.
+     */
+    private static final Map<String, Falling> FALLING = new ConcurrentHashMap<>();
+
+    /** How many distinct trough values are kept for one counter. */
+    private static final int DISTINCT_TROUGHS_KEPT = 8;
+
+    /**
+     * One counter's falls.
+     *
+     * <p>Both ends of the range are kept as scalars, because the cap on {@code troughs} drops the
+     * smallest value when the table is full. The small end is what the current assumption expects
+     * to see and the large end is the evidence against it, so a table that could silently lose
+     * either would be answering a different question than the one it was built for.
+     */
+    private static final class Falling {
+        private long falls;
+        private long turnarounds;
+        private long lowest = Long.MAX_VALUE;
+        private long highest = Long.MIN_VALUE;
+        private final TreeMap<Long, Integer> troughs = new TreeMap<>();
+    }
+
+    /**
+     * One counter's falls, as a reading. The two extremes are null when no fall was ever seen to
+     * turn back up, which is a counter that says nothing about where it was heading.
+     */
+    record FloorReading(long falls, long turnarounds, @Nullable Long lowest,
+                        @Nullable Long highest, Map<Long, Integer> troughs) {
+    }
+
+    /** Measurement only: every falling counter seen so far. */
+    static Map<String, FloorReading> floors() {
+        Map<String, FloorReading> out = new LinkedHashMap<>();
+        FALLING.forEach((key, falling) -> {
+            synchronized (falling) {
+                boolean turned = falling.turnarounds > 0;
+                out.put(key, new FloorReading(falling.falls, falling.turnarounds,
+                        turned ? falling.lowest : null, turned ? falling.highest : null,
+                        new LinkedHashMap<>(falling.troughs)));
+            }
+        });
+        return out;
+    }
+
+    /** Measurement only: how much of a falling counter every jump already leaves to the machine. */
+    static int verifyMargin() {
+        return VERIFY_MARGIN;
+    }
+
+    private static Falling fallingFor(String typeKey, String path) {
+        return FALLING.computeIfAbsent(peakKey(typeKey, path), ignored -> new Falling());
+    }
+
+    /** A counter went down. Counted whether or not it is ever seen coming back up. */
+    private static void countFall(String typeKey, String path) {
+        Falling falling = fallingFor(typeKey, path);
+        synchronized (falling) {
+            falling.falls++;
+        }
+    }
+
+    /**
+     * A counter that had been falling went back up, which is the only thing that says where it
+     * was heading.
+     *
+     * <p>What is written down is the value it was seen at, not the value one further step would
+     * have reached. The two differ by exactly one step and which of them a machine acts on is a
+     * judgement about that machine: a vanilla furnace's {@code BurnTime} is seen at 1 and its
+     * fuel is taken when it would reach 0, while a millstone's {@code Timer} is seen at 0. The
+     * step is logged beside the value so that both readings stay available.
+     */
+    private static void recordTrough(String typeKey, String path, long low, long fall, long to,
+                                     BlockPos pos) {
+        Falling falling = fallingFor(typeKey, path);
+        int seen;
+        synchronized (falling) {
+            falling.turnarounds++;
+            falling.lowest = Math.min(falling.lowest, low);
+            falling.highest = Math.max(falling.highest, low);
+            seen = falling.troughs.merge(low, 1, Integer::sum);
+            while (falling.troughs.size() > DISTINCT_TROUGHS_KEPT) {
+                falling.troughs.pollFirstEntry();
+            }
+        }
+        // Same cap as the peak table's, for the same reason: a counter turning round every cycle
+        // would otherwise write a line per cycle for the rest of the run.
+        if (seen <= CORROBORATION) {
+            Meanwhile.LOGGER.info("[generic] trough seen | type={} path={} turnsUpAt={} seen={}"
+                            + " to={} fall={} pos={}",
+                    typeKey, path, low, seen, to, fall, pos.toShortString());
+        }
+    }
+
     /** Every integral scalar in a tag, by dotted path, for watching values turn over. */
     private static void flatten(CompoundTag tag, List<String> prefix, Map<String, Long> out) {
         for (String key : tag.getAllKeys()) {
@@ -503,6 +608,9 @@ public final class GenericCatchUp {
                 BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(blockEntity.getType()));
         Map<String, Long> lastValues = flatten(blockEntity.saveWithoutMetadata(registries));
         Map<String, Long> lastRise = new LinkedHashMap<>();
+        // Survey only: the step a counter was falling by, so that the tick it turns back up on
+        // can be written down. Read by nothing that decides anything.
+        Map<String, Long> lastFall = new LinkedHashMap<>();
 
         int remaining = ticks;
         boolean jumpsAllowed = true;
@@ -547,7 +655,16 @@ public final class GenericCatchUp {
                 long movement = entry.getValue() - was;
                 if (movement > 0) {
                     lastRise.put(entry.getKey(), movement);
+                    // Survey only. A counter that had been falling and is now rising was as low
+                    // as it was going to get on the tick before this one, whether it turned round
+                    // immediately or stood still first.
+                    Long fell = lastFall.remove(entry.getKey());
+                    if (fell != null) {
+                        recordTrough(typeKey, entry.getKey(), was, fell, entry.getValue(), pos);
+                    }
                 } else if (movement < 0) {
+                    countFall(typeKey, entry.getKey());
+                    lastFall.put(entry.getKey(), -movement);
                     Long rise = lastRise.get(entry.getKey());
                     if (rise != null && isRewind(was, entry.getValue(), rise)) {
                         recordPeak(typeKey, entry.getKey(), was + rise, pos, was,
