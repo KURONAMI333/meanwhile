@@ -2,6 +2,7 @@ package com.kuronami.meanwhile;
 
 import com.kuronami.meanwhile.catchup.CropCatchUp;
 import com.kuronami.meanwhile.elapsed.CatchUpTestAccess;
+import com.kuronami.meanwhile.elapsed.ChunkCatchUp;
 import com.kuronami.meanwhile.harness.CatchUpSubject;
 import com.kuronami.meanwhile.harness.DifferentialHarness;
 import com.kuronami.meanwhile.harness.DifferentialHarness.Effort;
@@ -16,6 +17,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ThreadedLevelLightEngine;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.gametest.GameTestHolder;
@@ -468,6 +470,19 @@ public class HarnessGameTests {
      * gate's judgement — output grew, therefore the game resumed — as vacuous as it was, and
      * any other route to the same furnace would pass it just as silently.
      *
+     * <h3>What the ceiling still lets through, and what closes it</h3>
+     * <p>The ceiling separates the two mechanisms by size, so it only fires on a catch-up large
+     * enough to clear it. A debt of a few hundred ticks lands one extra ingot in this furnace and
+     * reads as growth of 3 — under the ceiling, and green while the game's ticker may have done
+     * none of it. Staged deliberately, that is exactly what it did (GAP_LOG G173).
+     *
+     * <p>So the growth is attributed rather than only bounded: the arena's owed total is read
+     * either side of the window and must not have moved. The drop above clears this arena's
+     * pending bookkeeping, so any payment inside the window has to be preceded by the chunk being
+     * told it is owed — which moves that figure before a tick is spent, and moves it for a part
+     * payment as much as for a whole one. Zero across the window is the statement that no
+     * catch-up did any work in it, at any size.
+     *
      * <p>This is <b>not</b> the arm-time reset G155 caught moving readings. That one was global
      * and destroyed every other gate's window; this one reaches the caller's own arena and
      * throws if handed anything else.
@@ -490,6 +505,12 @@ public class HarnessGameTests {
         // measured: from here the arena owes nothing and has nothing queued, and it cannot be
         // handed a fresh debt without being unloaded first.
         CatchUpTestAccess.forget(helper, helper.getLevel());
+        if (!ChunkCatchUp.recordsRunningTotals()) {
+            helper.fail("the per-chunk running totals are not being kept, so the reading below"
+                    + " that attributes this window's growth would be 0 whatever happened in it");
+            return;
+        }
+        long owedBeforeTheWindow = owedToTheArena(helper);
 
         // Run it to the end of its load: unlit, nothing cooking, input gone.
         subject.catchUp(helper, FURNACE_TICKS, RandomSource.create(SEED_CATCH_UP));
@@ -506,6 +527,23 @@ public class HarnessGameTests {
             double outputNow = subject.observe(helper)[0];
             Meanwhile.LOGGER.info("[harness] tickable after catch-up | output {} -> {}",
                     outputAfterCatchUp, outputNow);
+            // Attribution, and it comes first. The drop above cleared this arena's pending
+            // bookkeeping, so anything paid to it inside the window had to be told it was owed
+            // first, and being told is what moves this figure -- before a tick of it is spent,
+            // and whether or not the instalment ever finished. A part payment moves no balance
+            // and would leave `paidFor` at zero having advanced the furnace anyway.
+            long owedNow = owedToTheArena(helper);
+            Meanwhile.LOGGER.info("[attrib] tickable after catch-up | arena owed {} -> {}",
+                    owedBeforeTheWindow, owedNow);
+            if (owedNow != owedBeforeTheWindow) {
+                helper.fail("the arena was told it was owed " + (owedNow - owedBeforeTheWindow)
+                        + " ticks inside the 400-tick window (" + owedBeforeTheWindow + " -> "
+                        + owedNow + "), so a catch-up had work to do on this furnace while the"
+                        + " window was open and the growth below cannot be attributed to the"
+                        + " game's own ticking. Output read " + outputAfterCatchUp + " -> "
+                        + outputNow);
+                return;
+            }
             if (outputNow <= outputAfterCatchUp) {
                 helper.fail("the furnace smelted nothing in 400 real ticks after being caught up"
                         + " (output stayed at " + outputNow + "), so the catch-up left it"
@@ -528,6 +566,26 @@ public class HarnessGameTests {
             }
             helper.succeed();
         });
+    }
+
+    /**
+     * What the catch-up has been told this arena is owed, over the whole run.
+     *
+     * <p>The figure moves when a chunk is reconciled, which is before anything is spent on it,
+     * so a delta of zero across a window is the strongest statement available here that no
+     * catch-up did any work in it. What has actually been handed over is a weaker reading for
+     * this purpose: it only moves when an instalment finishes, and an instalment that stopped
+     * half way through the chunk has still advanced everything in front of where it stopped.
+     *
+     * <p>Every chunk the arena owns, because the furnace's chunk is not the only one a forced
+     * ticket keeps loaded and the walk is per chunk.
+     */
+    private static long owedToTheArena(GameTestHelper helper) {
+        long owed = 0L;
+        for (ChunkPos chunk : CatchUpTestAccess.arenaChunks(helper)) {
+            owed += ChunkCatchUp.owedFor(helper.getLevel(), chunk);
+        }
+        return owed;
     }
 
     // ---- the fail-safe: declining to skip -------------------------------------------
