@@ -25,7 +25,7 @@ export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot"
 ./_run_gate_loaded.sh <name>   # the same, with every core loaded first
 ```
 
-Acceptance is **63 required tests**, green 7/7 at idle and 10/10 under load.
+Acceptance is **64 required tests**, green 7/7 at idle and 10/10 under load.
 
 - **`_run_gate_loaded.sh` is the honest way to run the suite.** Load-sensitive defects do not appear
   at idle: two required gates each failed exactly once in dozens of idle runs and could not be
@@ -39,7 +39,15 @@ Acceptance is **63 required tests**, green 7/7 at idle and 10/10 under load.
 
 - **A deliberate red is an acceptance condition, not a nicety.** An assertion nobody has watched
   fail is not evidence that it can fail. If an assertion cannot be independently falsified, do not
-  add it — stage 4b declined one on exactly that ground. Stage the red, capture the log, revert it.
+  add it — stage 4b declined one on exactly that ground, and G173 declined an attribution on the
+  scheduler's own gate for the same reason: that class is registered behind a marker whose hooks
+  are not in the shipped configuration, so no run in the standing suite could watch it. Stage the
+  red, capture the log, revert it.
+- **A prevention needs a positive control, because absence of the bug looks like absence of the
+  mechanism.** A gate that drops the arena's debt before its window passes identically whether
+  the drop works or does nothing at all. Make the thing it prevents happen, watch the gate pass
+  when it should not, then watch the fix stop it — a debt of 250 ticks did exactly that under a
+  ceiling sized for a whole instalment, green on all 64 (G173).
 - **Predict before measuring.** Write down the expected result, then measure, then report both —
   including, especially, when the prediction was wrong. A wrong prediction that is reported is an
   independent check on the reasoning; one that is quietly dropped is not (G155 has a worked example).
