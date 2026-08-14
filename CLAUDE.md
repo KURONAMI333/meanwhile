@@ -86,7 +86,13 @@ counters are **global**, so a gate that resets them is reaching into every other
 - **`verifyNoTestScaffoldingInJar` is the machine gate that keeps test code out of the jar**, and it
   is wired into `check`. Nine thousand lines of measurement and fifteen GameTest classes are one
   `git mv` from being shipped; on 26.x a shipped GameTest class lands in a real registry and fails
-  the configuration sync a client performs on join. Do not relax its five readings.
+  the configuration sync a client performs on join. Do not relax its seven readings.
+- **The access transformer is split, and only the shipped half may name what the product calls.**
+  `src/main/resources/META-INF/accesstransformer.cfg` is inside the jar and widens vanilla for
+  every mod on the server, so it carries only members `src/main` calls; everything the measurement
+  needs goes in `src/gametest/accesstransformer.cfg`, which no source set packs. Development
+  applies both to the same Minecraft artifact, so the compiler cannot tell them apart — the sixth
+  and seventh readings of the gate above are what enforce it in both directions (G167).
 - **Test seams are package-private where the product does not need them wider.** The gametest source
   set shares the package names, so it still reaches them and a consumer of the jar does not. Do not
   re-widen one to `public` to reach it from a test in another package; put the test in the package,
