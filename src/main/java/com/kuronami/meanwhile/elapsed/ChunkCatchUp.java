@@ -569,22 +569,30 @@ public final class ChunkCatchUp {
         long carried = carryDebtAcrossReload ? debtOf(chunk) : 0L;
         long total = carried + owed;
         setDebt(chunk, total);
+        if (!carryDebtAcrossReload) {
+            // The outstanding balance is being dropped, so the instalment it belonged to is void
+            // and the mark that says how far into it the walk got means nothing. Left behind, it
+            // would make the next instalment skip the front of the chunk for a debt that has
+            // nothing to do with it -- an under-payment, but a silent one.
+            setPaidUpTo(chunk, Long.MIN_VALUE);
+        }
         Job job = new Job(level.dimension(), key);
         if (recordRunningTotals) {
             owedTotal.merge(job, owed, Long::sum);
         }
 
+        long resumeAt = paidUpToOf(chunk);
         Pending pending = PENDING.computeIfAbsent(job,
-                ignored -> new Pending(key, lastSeen, at, level.dimension()));
+                ignored -> new Pending(key, lastSeen, at, level.dimension(), resumeAt));
         pending.owed += owed;
         if (!pending.queued) {
             pending.queued = true;
             WORKLIST.addLast(job);
         }
         Meanwhile.LOGGER.debug("[catchup] owed | chunk={} dim={} lastSeen={} at={} elapsed={}"
-                        + " added={} carried={} debt={} mode={} queue={}",
+                        + " added={} carried={} debt={} resumeAfter={} mode={} queue={}",
                 new ChunkPos(key), level.dimension().location(), lastSeen, at, elapsed,
-                owed, carried, total, current.label(), WORKLIST.size());
+                owed, carried, total, pending.paidUpTo, current.label(), WORKLIST.size());
     }
 
     // ---- paying it off --------------------------------------------------------------------
@@ -780,6 +788,11 @@ public final class ChunkCatchUp {
             // assertion in this file that would otherwise be silent and severe — into a test of
             // how many level ticks the instalment happened to be spread over.
             pending.paidUpTo = portion.stoppedAfter();
+            // Written onto the chunk as well as held here. The balance is untouched by a part
+            // payment, so a chunk saved at this point comes back owing everything and holding
+            // machines that have already been advanced; without the mark on the chunk the next
+            // instalment starts at the front of the walk and hands them the same slice again.
+            setPaidUpTo(chunk, portion.stoppedAfter());
             if (partialPayments++ == 0) {
                 // Once per run. That the walk stops inside a chunk at all is the thing the
                 // mid-chunk stop exists to do, and "it never happened" and "it happened and
@@ -795,6 +808,7 @@ public final class ChunkCatchUp {
         }
 
         pending.paidUpTo = Long.MIN_VALUE;
+        setPaidUpTo(chunk, Long.MIN_VALUE);
         pending.instalmentSlice = 0;
         pending.slices++;
         if (recordRunningTotals) {
@@ -850,6 +864,31 @@ public final class ChunkCatchUp {
         chunk.setUnsaved(true);
     }
 
+    /**
+     * How far into this chunk the instalment in flight has got, or {@link Long#MIN_VALUE}.
+     *
+     * <p>Read from the chunk rather than from {@link Pending}, because the case it exists for is
+     * the one where there is no {@code Pending} left to read.
+     */
+    private static long paidUpToOf(LevelChunk chunk) {
+        Long stored = chunk.getExistingDataOrNull(ChunkClockAttachments.CATCH_UP_PAID_UP_TO);
+        return stored == null ? Long.MIN_VALUE : stored;
+    }
+
+    private static void setPaidUpTo(LevelChunk chunk, long paidUpTo) {
+        if (paidUpTo == Long.MIN_VALUE) {
+            if (chunk.getExistingDataOrNull(ChunkClockAttachments.CATCH_UP_PAID_UP_TO) == null) {
+                // Nothing to remove. setUnsaved on a chunk that has not changed is a save this
+                // call caused, and this one runs at the end of every instalment.
+                return;
+            }
+            chunk.removeData(ChunkClockAttachments.CATCH_UP_PAID_UP_TO);
+        } else {
+            chunk.setData(ChunkClockAttachments.CATCH_UP_PAID_UP_TO, paidUpTo);
+        }
+        chunk.setUnsaved(true);
+    }
+
     /** One chunk waiting to be paid. */
     private record Job(ResourceKey<Level> dimension, long chunkPos) {
     }
@@ -874,8 +913,12 @@ public final class ChunkCatchUp {
          * so an index means something different on the next pass; a position that the walk is
          * sorted by does not move when its neighbours do. A machine placed behind the mark during
          * an instalment is simply not carried by that instalment and waits for the next one.
+         *
+         * <p>Mirrored onto the chunk in {@link ChunkClockAttachments#CATCH_UP_PAID_UP_TO}, and
+         * seeded from it when this object is built, so that the position keeps its meaning when
+         * the process this map lives in has gone away and the chunk has not.
          */
-        private long paidUpTo = Long.MIN_VALUE;
+        private long paidUpTo;
         /**
          * The window this instalment is carrying every machine by, frozen when it starts.
          *
@@ -883,14 +926,26 @@ public final class ChunkCatchUp {
          * debt however many level ticks it is spread over: recomputing it against the outstanding
          * balance halfway would carry the second half of the chunk by a different amount than the
          * first, and the balance is only written down when the whole chunk has been carried.
+         *
+         * <p><b>Not persisted, unlike {@link #paidUpTo}, and the asymmetry is deliberate.</b>
+         * After a restart the window is recomputed against the balance the chunk came back with,
+         * which is the old balance plus whatever the new absence added: the recomputed window
+         * {@code s1 = min(debt + added, slice)} is never smaller than the one the interrupted
+         * instalment used, {@code s0 = min(debt, slice)}. The machines in front of the mark
+         * therefore end up {@code s1 - s0} ticks short of the ones behind it and never ahead of
+         * them, which is the direction this mod is allowed to be wrong in. Persisting the window
+         * as well would close that gap and would put a second serialised field on every chunk to
+         * do it.
          */
         private int instalmentSlice;
 
-        private Pending(long chunkPos, long lastSeen, long at, ResourceKey<Level> dimension) {
+        private Pending(long chunkPos, long lastSeen, long at, ResourceKey<Level> dimension,
+                        long paidUpTo) {
             this.chunkPos = chunkPos;
             this.lastSeen = lastSeen;
             this.at = at;
             this.dimension = dimension;
+            this.paidUpTo = paidUpTo;
         }
 
         private void absorb(Sweep slice) {
@@ -1335,6 +1390,11 @@ public final class ChunkCatchUp {
                 setDebt(chunk, 0L);
                 cleared++;
             }
+            // With the balance gone the instalment it belonged to is gone, so the mark saying
+            // how far into it the walk got has to go with it. Left behind, the next instalment
+            // on this chunk would skip everything in front of a position that no longer means
+            // anything -- and the caller asked for a clean chunk, not a half-carried one.
+            setPaidUpTo(chunk, Long.MIN_VALUE);
         }
         int queuedBefore = WORKLIST.size();
         WORKLIST.removeIf(jobs::contains);
@@ -1461,6 +1521,44 @@ public final class ChunkCatchUp {
     public static long debtFor(ServerLevel level, ChunkPos pos) {
         LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
         return chunk == null ? 0L : debtOf(chunk);
+    }
+
+    /**
+     * How far into a loaded chunk the instalment in flight has got, read off the chunk itself,
+     * or {@link Long#MIN_VALUE} when none is.
+     */
+    static long paidUpToFor(ServerLevel level, ChunkPos pos) {
+        LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
+        return chunk == null ? Long.MIN_VALUE : paidUpToOf(chunk);
+    }
+
+    /**
+     * Test-only: drop everything this class holds in memory about the chunks named, and touch
+     * nothing the chunks themselves carry. What a restart leaves behind.
+     *
+     * <p>Not {@link #forget}. That one is a teardown and zeroes the debt as well, which is the
+     * opposite of the state under measurement here: a restart takes the queue and the half-built
+     * bookkeeping and leaves the chunk's own balance and resume position exactly where the save
+     * put them. Reaching only the caller's own chunks, on the same terms and for the same
+     * reasons as {@link #forget} (GAP_LOG G156, G158, G160).
+     */
+    static void dropInFlightState(ServerLevel level, String caller, Collection<ChunkPos> owned) {
+        Set<Job> jobs = new HashSet<>();
+        for (ChunkPos pos : owned) {
+            jobs.add(new Job(level.dimension(), pos.toLong()));
+        }
+        int queuedBefore = WORKLIST.size();
+        WORKLIST.removeIf(jobs::contains);
+        int dequeued = queuedBefore - WORKLIST.size();
+        int dropped = 0;
+        for (Job job : jobs) {
+            if (PENDING.remove(job) != null) {
+                dropped++;
+            }
+        }
+        Meanwhile.LOGGER.info("[catchup] drop in flight | chunks={} dequeued={} dropped={} |"
+                        + " left queued={} pending={} from={}",
+                jobs.size(), dequeued, dropped, WORKLIST.size(), PENDING.size(), caller);
     }
 
     /**

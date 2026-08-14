@@ -56,6 +56,32 @@ public final class ChunkClockAttachments {
                             .serialize(Codec.LONG)
                             .build());
 
+    /**
+     * How far into the chunk the instalment in flight has got, as a packed block position, or
+     * {@link Long#MIN_VALUE} when no instalment is in flight.
+     *
+     * <p>Serialised for a reason {@link #CATCH_UP_DEBT} alone does not cover. An instalment is
+     * one payment however many level ticks it is spread over, and the debt only moves when the
+     * whole chunk has been carried — so a chunk saved part-way through one carries the machines
+     * at the front of the walk already advanced and the full balance still outstanding. Held only
+     * in memory, the resume position is what the restart loses, and the machines at the front of
+     * the walk are then offered the same slice a second time. That is over-advancing, which is
+     * the one direction this mod is not allowed to be wrong in.
+     *
+     * <p>A packed position rather than an index into the walk, for the reason the in-memory
+     * field is: the walk is rebuilt from the chunk's own map on every pass and a catch-up may
+     * add or remove a block entity, so an index means something different after a reload while
+     * a position the walk is sorted by does not.
+     *
+     * <p>Written only while an instalment is part-paid, and removed when it settles, so an
+     * ordinary chunk carries nothing extra.
+     */
+    public static final Supplier<AttachmentType<Long>> CATCH_UP_PAID_UP_TO =
+            ATTACHMENT_TYPES.register("catch_up_paid_up_to",
+                    () -> AttachmentType.builder(() -> Long.MIN_VALUE)
+                            .serialize(Codec.LONG)
+                            .build());
+
     public static void register(IEventBus modEventBus) {
         ATTACHMENT_TYPES.register(modEventBus);
     }
