@@ -1,5 +1,6 @@
 package com.kuronami.meanwhile;
 
+import com.kuronami.meanwhile.elapsed.CatchUpTestAccess;
 import com.kuronami.meanwhile.scheduler.DeferralScheduler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
@@ -139,6 +140,15 @@ public final class MenuObservationGameTests {
             report(helper, "open+0", WATCHED, "watched", watcher, watchedRecord);
             report(helper, "open+0", CONTROL, "control", controlWatcher, controlRecord);
             report(helper, "open+0", UNWATCHED, "unwatched", null, null);
+            // Immediately before the window this gate judges over. Everything below turns on
+            // cookingProgress having moved on one furnace and not on another, and a catch-up
+            // instalment reaching either of them moves it without the game's dispatch having
+            // anything to do with it — the shape found in
+            // HarnessGameTests#catchUpLeavesTheFurnaceTickableByTheGame, where it was measured
+            // and reproduced (GAP_LOG G164 ruling 43, G172 ruling 53). GameTest stands each
+            // arena on ground an earlier one used, so these chunks arrive owing tens of
+            // thousands of ticks. From here this arena owes nothing and has nothing queued.
+            CatchUpTestAccess.forget(helper, level);
         });
 
         for (int after : SAMPLE_AFTER_OPEN) {
