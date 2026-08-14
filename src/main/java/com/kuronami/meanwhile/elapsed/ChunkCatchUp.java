@@ -32,6 +32,8 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -480,13 +482,24 @@ public final class ChunkCatchUp {
                 if (perLevel != null) {
                     perLevel.remove(chunkPos);
                 }
+                // The guard is keyed the same way and nothing else was telling it. Its own
+                // sweep only ever empties count entries whose window has run out; an isolation
+                // is permanent and was surviving the chunk it belongs to.
+                CatchUpGuard.forgetChunk(dimension, chunkPos);
             }
 
             @Override
             public void forgetLevel(ResourceKey<Level> dimension) {
                 SWEPT.remove(dimension);
+                CatchUpGuard.forgetLevel(dimension);
             }
         });
+        // A level going away covers a server that shuts its levels down; this covers the rest of
+        // it. The state here is static and an integrated server runs inside the same process as
+        // the next one, so without this a position isolated in one world is still isolated at
+        // the same coordinates of the world opened after it.
+        NeoForge.EVENT_BUS.addListener(
+                (ServerStoppedEvent event) -> CatchUpGuard.forgetAll());
         Meanwhile.LOGGER.info("[catchup] installed | mode={} threshold={} ticks",
                 mode.label(), mode.threshold());
     }

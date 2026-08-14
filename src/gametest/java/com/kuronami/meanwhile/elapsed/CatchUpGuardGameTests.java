@@ -244,6 +244,19 @@ public final class CatchUpGuardGameTests {
                         + EXPECTED_SLICES + " windows");
                 return;
             }
+            // An isolation is permanent and keyed on a position, and the only thing that removes
+            // one is the chunk going away. Asserted here, where a live isolation exists to be
+            // removed: without it the set grows for as long as the process runs, and on an
+            // integrated server it decides the fate of a machine at the same coordinates of the
+            // next world. Only the guard's own half is exercised from here; that a chunk unload
+            // reaches it is the wiring in ChunkCatchUp's forgetter.
+            CatchUpGuard.forgetChunk(level.dimension(), chunk.toLong());
+            if (CatchUpGuard.isIsolated(level.dimension(), pos)) {
+                helper.fail("the chunk " + chunk + " holding the isolated " + pos.toShortString()
+                        + " was forgotten and the isolation stayed behind, so nothing ever"
+                        + " removes one");
+                return;
+            }
             helper.succeed();
         }
 
