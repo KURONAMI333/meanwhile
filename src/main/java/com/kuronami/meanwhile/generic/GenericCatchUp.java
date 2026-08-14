@@ -1085,6 +1085,23 @@ public final class GenericCatchUp {
     /**
      * Ticks of a regime kept out of every jump: one for the boundary, one to check the jump by.
      *
+     * <p>It is also the whole of what protects a falling counter, and that is worth stating here
+     * because nothing else says so. A falling counter is sent at zero, which is the one boundary
+     * this class assumes rather than watches, and the assumption is false: of the ten types seen
+     * moving a falling counter under a powered walk of 380 blocks, four stop somewhere else —
+     * {@code create:deployer Timer} at -12, {@code create:saw NextTick} at -1,
+     * {@code minecraft:hopper TransferCooldown} at 1, {@code minecraft:blast_furnace BurnTime}
+     * at 1 (G169, G170 ruling 49).
+     *
+     * <p>None of the four is reachable because this constant, and not the assumption, decides
+     * where a jump stops: the headroom below is {@code after - VERIFY_MARGIN}, so a jump lands at
+     * or above 2 and the values under it are always reached by a real tick. Lower this and that
+     * stops being true silently — at 1 a counter standing at 2 becomes jumpable and lands on 1,
+     * which is a floor two of the four measured types sit at. The dependency is asserted by
+     * {@code JumpMarginGameTests} through {@link #spanFor}, so it goes red rather than quiet.
+     *
+     * <p>Raising it is not free either: it is subtracted from every jump on every counter,
+     * rising or falling.
      */
     private static final int VERIFY_MARGIN = 2;
 
