@@ -25,7 +25,7 @@ export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot"
 ./_run_gate_loaded.sh <name>   # the same, with every core loaded first
 ```
 
-Acceptance is **62 required tests**, green 7/7 at idle and 10/10 under load.
+Acceptance is **63 required tests**, green 7/7 at idle and 10/10 under load.
 
 - **`_run_gate_loaded.sh` is the honest way to run the suite.** Load-sensitive defects do not appear
   at idle: two required gates each failed exactly once in dozens of idle runs and could not be

@@ -1084,6 +1084,7 @@ public final class GenericCatchUp {
      */
     /**
      * Ticks of a regime kept out of every jump: one for the boundary, one to check the jump by.
+     *
      */
     private static final int VERIFY_MARGIN = 2;
 
@@ -1129,6 +1130,33 @@ public final class GenericCatchUp {
             return 0;
         }
         return (int) Math.min(span, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Measurement only: what {@link #span} answers for a tick that moved these counters.
+     *
+     * <p>A seam rather than a copy. The arithmetic a gate asks about is the arithmetic the jump
+     * uses, so a gate that swept a reimplementation of it would be measuring its own reasoning;
+     * this hands the same list to the same method. What the caller supplies is one array per
+     * field of {@link Delta} that {@code span} reads — where each counter stands, how far it
+     * moved on the observed tick, and what a rising one is heading for — because {@code Delta} is
+     * private and there is no reason for it not to be.
+     *
+     * @param ceiling {@link #noCeiling()} for a counter that is going down, whose limit is not
+     *                read from anywhere
+     */
+    static int spanFor(long[] after, long[] movement, long[] ceiling, int remaining) {
+        List<Delta> deltas = new ArrayList<>();
+        for (int i = 0; i < after.length; i++) {
+            deltas.add(new Delta(List.of("counter" + i), Tag.TAG_INT, movement[i], after[i],
+                    ceiling[i]));
+        }
+        return span(deltas, remaining, Mode.SAFE, new Result());
+    }
+
+    /** Measurement only: what a counter with nothing to aim at carries. */
+    static long noCeiling() {
+        return Delta.NO_CEILING;
     }
 
     /**
