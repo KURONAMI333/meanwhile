@@ -54,3 +54,8 @@ harness_*.txt
 *_v2.txt
 *_jstack.txt
 *_summary.txt
+
+### キャンペーンの内部成果物（公開 repo には入れない） ###
+_sol_review.md
+*_console.txt
+_g*.sh
