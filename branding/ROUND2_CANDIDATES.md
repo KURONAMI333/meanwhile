@@ -98,11 +98,13 @@ kura asked for more branding, so each direction ships three things:
   gallery image, which Modrinth renders 456×160 in list rows and 260×130 on the
   project page
 
-The banner is not an invented format: it is the second author-controlled
-discovery asset the store gives us (STORE_DESCRIPTION_GUIDE), and it matters more
-for this mod than for its siblings. Meanwhile is server-side with no screen, no
-block and no item, so **there is no in-game screenshot that shows it working** —
-a drawn banner is the only honest gallery image it can have.
+On the banner, precisely: the format is documented and author-controlled — it is
+the second discovery asset the store gives us, and STORE_DESCRIPTION_GUIDE
+records its sizes. **No sibling has used it as drawn art**; the family's gallery
+images are in-game F2 screenshots. What makes it right here rather than invented
+is that Meanwhile is server-side with no screen, no block and no item, so **there
+is no in-game screenshot that shows it working** — the screenshot alternative the
+siblings use is not available to this mod.
 
 Every direction extended to a banner. D gains the most from the wider frame (the
 name fits on one line and the caption rule comes back); A gains the least, since
@@ -143,3 +145,13 @@ No winner is picked; that is kura's. Nothing has been made final, no size varian
 has been promoted to `branding/meanwhile_icon_*.png`, and no in-jar logo has been
 wired — those belong to the finalisation step after a choice, together with the
 `logoFile` entry the playbook's gate requires.
+
+**Owed at that step, so it is not forgotten:** the playbook's last gate wants the
+losing candidates suffixed `_NOT_SELECTED` and the chosen one `_CONFIRMED`, so a
+later session cannot silently re-pick a rejected mark. That rename is outstanding
+for these four *and for round 1's four*, which are rejected and still carry bare
+names. Round 1's files are deliberately left exactly as they are here — kura's
+rejection is the record, and renaming them is itself a decision.
+
+Round 1's `render_meanwhile_icons.py` still regenerates its own PNGs byte for
+byte; re-running it after this round's work changes nothing.
