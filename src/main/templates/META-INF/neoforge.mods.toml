@@ -10,6 +10,7 @@ version="${mod_version}"
 displayName="${mod_name}"
 authors="${mod_authors}"
 displayURL="https://github.com/KURONAMI333/meanwhile"
+logoFile="logo.png"
 description='''
 ${mod_description}
 '''
