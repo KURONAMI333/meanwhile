@@ -59,3 +59,7 @@ harness_*.txt
 _sol_review.md
 *_console.txt
 _g*.sh
+
+### 第三者 MOD のアイコン（観察用に落としたもの。公開 repo に入れない） ###
+branding/gate0/
+branding/__pycache__/
