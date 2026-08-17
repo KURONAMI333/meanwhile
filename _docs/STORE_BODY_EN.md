@@ -1,3 +1,21 @@
+<!--
+KURONAMI store description (Modrinth body / CurseForge description — shared, English).
+Follows knowledge/STORE_BODY_FRAMEWORK.md (no version table, function-first hook, facts over adjectives).
+
+Published 2026-08-17. This block records what was actually set on each store; the
+body below it is what goes in the description field.
+
+== Store fields as set ==
+MODRINTH  (mlU8zint, slug meanwhile): categories=game-mechanics, utility | env: client UNSUPPORTED,
+          server REQUIRED | license LicenseRef-All-Rights-Reserved | gallery 0 (deliberate — this mod
+          draws nothing on the client, so a screenshot shows no difference) | 1 version
+          (0.1.0+neoforge-1.21.1), environment=server_only
+CURSEFORGE (project 1655787): Class=Mods | main category=Server Utility | additional=Utility & QoL
+          | Allow Comments=ON | license=All Rights Reserved | distribution=Allow distribution to 3rd party
+          (required so modpacks using external launchers do not break)
+SUMMARY: Advances the machines in a chunk forward by the ticks they missed while it was unloaded, without needing to know what kind of machine it is.
+-->
+
 # Meanwhile
 
 Advances the machines in a chunk forward by the ticks they missed while it was unloaded, without needing to know what kind of machine it is.
@@ -21,5 +39,3 @@ It doesn't use mixins, so it doesn't rewrite any other mod's code. Server-side o
 All Rights Reserved. Free to put in any modpack, on any platform, monetised or not - no permission needed, no credit required. Source is published so you can read exactly what it does.
 
 Source and issues: https://github.com/KURONAMI333/meanwhile
-
-Author: KURONAMI
