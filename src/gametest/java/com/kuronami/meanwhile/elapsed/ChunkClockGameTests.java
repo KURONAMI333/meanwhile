@@ -118,7 +118,7 @@ public final class ChunkClockGameTests {
                     // The markers above are this test's own exceptions and isolations, and the
                     // guard's totals are global. Put them back where the batch found them, so
                     // the gate that reads those totals is measuring its own subject and not
-                    // this one's (CLAUDE.md: gates must not corrupt other gates).
+                    // this one's (gates must not corrupt other gates).
                     CatchUpGuard.reset();
                     Meanwhile.LOGGER.info("[clock] restored | forced={} runningTicks={}",
                             forcedChunks(level), ChunkTickProbe.runningTicks());
